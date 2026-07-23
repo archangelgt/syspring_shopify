@@ -1,0 +1,49 @@
+services:
+  shopify-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erpsys-syspricing-app
+    restart: unless-stopped
+    ports:
+      - "3011:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/app/data
+      - HOST=${HOST:-https://syspricing.shopify.erpsys.pro}
+      - SCOPES=${SCOPES:-read_products,write_products,read_customers,write_customers}
+      - APP_TITLE=${APP_TITLE:-SysPricing}
+      - APP_SUBTITLE=${APP_SUBTITLE:-B2B Price Engine}
+      - CUSTOMER_AUTH_MODE=${CUSTOMER_AUTH_MODE:-oidc}
+      - TZ=America/Guatemala
+    volumes:
+      - syspricing-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/health',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - syspricing-net
+
+volumes:
+  syspricing-data:
+
+networks:
+  syspricing-net:
+    driver: bridge

@@ -1,0 +1,35 @@
+query RunInput($tags: [String!]!) {
+  cart {
+    buyerIdentity {
+      customer {
+        hasTags(tags: $tags) {
+          hasTag
+          tag
+        }
+      }
+    }
+    lines {
+      id
+      quantity
+      cost {
+        amountPerQuantity {
+          amount
+          currencyCode
+        }
+      }
+      merchandise {
+        ... on ProductVariant {
+          id
+          metafield(namespace: "syspricing", key: "prices") {
+            value
+          }
+        }
+      }
+    }
+  }
+  discount {
+    metafield(namespace: "syspricing", key: "function-config") {
+      value
+    }
+  }
+}

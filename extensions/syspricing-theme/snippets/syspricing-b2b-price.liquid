@@ -1,0 +1,65 @@
+{%- doc -%}
+  SYSPRICING B2B price — tag = price list.
+  New Customer Accounts: pass tags to App Proxy (logged_in_customer_id often empty).
+
+  {% render 'syspricing-b2b-price', product_resource: product_resource %}
+{%- enddoc -%}
+
+{%- liquid
+  assign sp_product = product_resource | default: product
+  if sp_product == blank or customer == blank
+    echo ''
+    break
+  endif
+
+  assign sp_variant = sp_product.selected_or_first_available_variant
+  assign prices_map = sp_variant.metafields.syspricing.prices.value
+  assign config = shop.metafields.syspricing.function-config.value
+  assign best_price = nil
+  assign best_tag = nil
+  assign best_priority = -999999
+  assign tags_csv = customer.tags | join: ','
+
+  if prices_map != blank
+    for tag in customer.tags
+      assign tag_key = tag | strip
+      assign candidate = prices_map[tag_key]
+      if candidate == blank
+        continue
+      endif
+      assign prio = 0
+      if config != blank and config.priority != blank and config.priority[tag_key] != blank
+        assign prio = config.priority[tag_key] | plus: 0
+      endif
+      if best_price == blank or prio > best_priority
+        assign best_price = candidate
+        assign best_tag = tag_key
+        assign best_priority = prio
+      endif
+    endfor
+  endif
+-%}
+
+<div
+  id="syspricing-b2b-price"
+  class="syspricing-b2b-price"
+  data-logged-in="1"
+  data-variant-id="{{ sp_variant.id }}"
+  data-customer-id="{{ customer.id }}"
+  data-customer-tags="{{ tags_csv | escape }}"
+  data-proxy="/apps/syspricing/prices"
+>
+  <span class="syspricing-label">Tu precio:</span>
+  <span class="syspricing-amount">
+    {%- if best_price != blank -%}Q{{ best_price }}{%- endif -%}
+  </span>
+  <span class="syspricing-tag">{% if best_tag != blank %}({{ best_tag }}){% endif %}</span>
+  <div class="syspricing-status" {% if best_price != blank %}style="display:none"{% endif %}>
+    {%- if best_price == blank -%}
+      Cargando precio…
+    {%- endif -%}
+  </div>
+</div>
+
+{{ 'https://syspricing.shopify.erpsys.pro/storefront/syspricing-price.css' | stylesheet_tag }}
+<script src="https://syspricing.shopify.erpsys.pro/storefront/syspricing-price.js?v=4" defer></script>

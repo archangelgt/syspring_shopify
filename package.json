@@ -1,0 +1,22 @@
+{
+  "name": "syspricing",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SYSPRICING — B2B Price Engine for Shopify (Phase 1)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test:smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@shopify/shopify-api": "^11.12.0",
+    "@shopify/shopify-app-express": "^5.0.14",
+    "@shopify/shopify-app-session-storage-sqlite": "^4.0.14",
+    "express": "^4.21.2",
+    "sql.js": "^1.12.0"
+  }
+}

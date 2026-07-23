@@ -1,0 +1,7 @@
+api_version = "2025-01"
+
+[[extensions]]
+type = "theme"
+name = "SYSPRICING B2B Price"
+handle = "syspricing-theme"
+uid = "syspricing-theme-0001"

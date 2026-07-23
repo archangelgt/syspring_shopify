@@ -1,0 +1,21 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "SYSPRICING B2B Discount"
+handle = "syspricing-discount"
+type = "function"
+uid = "syspricing-discount-0001"
+description = "Applies absolute B2B prices from syspricing metafields"
+
+  [extensions.build]
+  command = ""
+  path = "dist"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.input.variables]
+  namespace = "syspricing"
+  key = "function-config"

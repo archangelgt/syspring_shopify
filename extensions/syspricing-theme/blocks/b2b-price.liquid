@@ -1,0 +1,41 @@
+{% comment %}
+  SYSPRICING B2B Price — App Block
+  Shows tag-based price for logged-in customers via App Proxy /apps/syspricing/prices
+{% endcomment %}
+
+<div
+  id="syspricing-b2b-price"
+  class="syspricing-b2b-price"
+  data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  data-product-id="{{ product.id }}"
+  data-logged-in="{% if customer %}1{% else %}0{% endif %}"
+  data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
+  data-proxy="/apps/syspricing/prices"
+  {% unless customer %}hidden{% endunless %}
+>
+  {% if customer %}
+    <span class="syspricing-label">{{ block.settings.label }}:</span>
+    <span class="syspricing-amount">…</span>
+    <span class="syspricing-tag"></span>
+  {% endif %}
+</div>
+
+{% if customer %}
+  <script src="{{ 'syspricing-price.js' | asset_url }}" defer></script>
+{% endif %}
+
+{% schema %}
+{
+  "name": "SYSPRICING B2B Price",
+  "target": "section",
+  "stylesheet": "syspricing-price.css",
+  "settings": [
+    {
+      "type": "text",
+      "id": "label",
+      "label": "Label",
+      "default": "Tu precio"
+    }
+  ]
+}
+{% endschema %}

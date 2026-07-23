@@ -1,0 +1,22 @@
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration
+name = "syspricing"
+client_id = "14db15829553ce67a7973d8686e12978"
+application_url = "https://syspricing.shopify.erpsys.pro"
+embedded = true
+
+[access_scopes]
+scopes = "read_customers,write_customers,read_inventory,read_inventory_shipments,read_inventory_shipments_received_items,read_inventory_transfers,read_locations,read_merchant_managed_fulfillment_orders,read_orders,write_orders,read_products,write_products"
+
+[auth]
+redirect_urls = [ "https://syspricing.shopify.erpsys.pro/auth/callback" ]
+
+[app_proxy]
+url = "https://syspricing.shopify.erpsys.pro/proxy"
+subpath = "syspricing"
+prefix = "apps"
+
+[webhooks]
+api_version = "2025-01"
+
+[pos]
+embedded = false

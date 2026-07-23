@@ -1,0 +1,22 @@
+.syspricing-b2b-price {
+  margin: 0.75rem 0 1rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #aee0bf;
+  background: #eaf7f0;
+  border-radius: 8px;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.syspricing-b2b-price .syspricing-amount {
+  margin-left: 0.35rem;
+  color: #0d6b56;
+}
+.syspricing-b2b-price .syspricing-tag {
+  margin-left: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #6d7175;
+}
+.syspricing-b2b-price[hidden] {
+  display: none !important;
+}
