@@ -10,6 +10,6 @@
  *     <span class="syspricing-amount"></span>
  *     <span class="syspricing-tag"></span>
  *   </div>
- *   <script src="https://syspricing.shopify.erpsys.pro/storefront/syspricing-price.js" defer></script>
+ *   <script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js" defer></script>
  * {% endif %}
  */

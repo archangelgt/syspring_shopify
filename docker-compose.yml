@@ -3,24 +3,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: erpsys-syspricing-app
+    container_name: erpsys-syspricing-somosface
     restart: unless-stopped
     ports:
-      - "3011:3000"
+      - "3012:3000"
     env_file:
       - .env
     environment:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
-      - HOST=${HOST:-https://syspricing.shopify.erpsys.pro}
+      - HOST=${HOST:-https://syspricing.shopify.somosface.erpsys.pro}
       - SCOPES=${SCOPES:-read_products,write_products,read_customers,write_customers}
       - APP_TITLE=${APP_TITLE:-SysPricing}
-      - APP_SUBTITLE=${APP_SUBTITLE:-B2B Price Engine}
+      - APP_SUBTITLE=${APP_SUBTITLE:-B2B Price Engine · SomosFace}
       - CUSTOMER_AUTH_MODE=${CUSTOMER_AUTH_MODE:-oidc}
       - TZ=America/Guatemala
     volumes:
-      - syspricing-data:/app/data
+      - syspricing-somosface-data:/app/data
     healthcheck:
       test:
         [
@@ -39,11 +39,11 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - syspricing-net
+      - syspricing-somosface-net
 
 volumes:
-  syspricing-data:
+  syspricing-somosface-data:
 
 networks:
-  syspricing-net:
+  syspricing-somosface-net:
     driver: bridge

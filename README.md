@@ -21,15 +21,18 @@ See [VISION.md](./VISION.md) and [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 | Pieza | Detalle |
 |-------|---------|
-| Host | `https://syspricing.shopify.erpsys.pro` |
-| Puerto | **3011** → `:3000` |
-| Contenedor | `erpsys-syspricing-app` |
+| Host | `https://syspricing.shopify.somosface.erpsys.pro` |
+| Puerto | **3012** → `:3000` |
+| Contenedor | `erpsys-syspricing-somosface` |
+| Rama / carpeta | `deploy/somosface` → `/opt/erpsys/syspricing-somosface` |
 | DB | sql.js → `DATA_DIR/syspricing.sqlite` |
 | Health | `GET /health` |
 
+> Instancia **SomosFace**. La de Seraph (`main`, puerto 3011) no puede instalarse aquí por Custom distribution Plus. Ver [deploy/somosface/README.md](./deploy/somosface/README.md).
+
 ```bash
 docker compose up -d --build
-curl http://127.0.0.1:3011/health
+curl http://127.0.0.1:3012/health
 npm install && npm run test:smoke
 ```
 
@@ -65,7 +68,7 @@ Shopify **no** cambia el precio de la ficha de producto con Functions (solo cart
 
 1. **App Proxy** (Partner Dashboard o `shopify.app.toml`):
    - Prefix `apps` / subpath `syspricing`
-   - URL `https://syspricing.shopify.erpsys.pro/proxy`
+   - URL `https://syspricing.shopify.somosface.erpsys.pro/proxy`
 2. Crea Price Lists = tags (`DPAÑUELOS`, …) y carga precios en **Variant Pricing**.
 3. En el theme, añade el App Block **SYSPRICING B2B Price**, o el snippet Liquid (ver tab Inicio en la app).
 4. El JS llama `/apps/syspricing/prices?variant_ids=…` con el customer logueado y reemplaza el precio.
