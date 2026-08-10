@@ -120,14 +120,14 @@ function authUrlForShop(shop, host) {
 function renderAuthorizeBreakout(res, shop, host) {
   const authPath = authUrlForShop(shop, host);
   const authFull = `${HOST}${authPath}`;
+  // Do NOT load App Bridge here — it keeps OAuth inside Admin iframe and
+  // accounts.shopify.com refuses to connect (X-Frame-Options).
   setEmbeddedCsp(res, shop);
   res.status(200).type('html').send(`<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="shopify-api-key" content="${escapeHtml(API_KEY)}" />
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <title>Autorizar ${escapeHtml(APP_TITLE)}</title>
   <style>
     :root { --accent:#008060; --bg:#f6f6f7; --text:#202223; --muted:#6d7175; }
@@ -145,11 +145,22 @@ function renderAuthorizeBreakout(res, shop, host) {
 <body>
   <div class="box">
     <h1>Autorizar ${escapeHtml(APP_TITLE)}</h1>
-    <p>Para instalar la app hay que autorizarla <strong>fuera</strong> del iframe de Admin.</p>
+    <p>Abriendo autorización fuera del Admin…</p>
     <p>Tienda: <code>${escapeHtml(shop)}</code></p>
-    <p style="font-size:0.9rem;color:var(--muted);">Scopes: <code>${escapeHtml(SCOPES.join(', '))}</code></p>
-    <a class="btn" href="${escapeHtml(authFull)}" target="_top" rel="noopener">Instalar / Autorizar</a>
+    <a class="btn" id="auth-link" href="${escapeHtml(authFull)}" target="_top" rel="noopener">Instalar / Autorizar</a>
   </div>
+  <script>
+    (function () {
+      var url = ${JSON.stringify(authFull)};
+      try {
+        if (window.top && window.top !== window.self) {
+          window.top.location.href = url;
+          return;
+        }
+      } catch (e) {}
+      window.location.href = url;
+    })();
+  </script>
 </body>
 </html>`);
 }
@@ -253,6 +264,8 @@ async function requireShop(req, res, next) {
 bootstrap()
   .then(({ useCases, customersAdmin }) => {
     const app = express();
+    // Apache terminates TLS and proxies HTTP → Node. Required for Secure OAuth cookies.
+    app.set('trust proxy', 1);
     app.use(express.urlencoded({ extended: false }));
 
     app.get('/health', (_req, res) => {
@@ -268,7 +281,22 @@ bootstrap()
       });
     });
 
-    app.get(shopify.config.auth.path, shopify.auth.begin());
+    app.get(shopify.config.auth.path, (req, res, next) => {
+      const embedded =
+        req.query.embedded === '1' ||
+        String(req.headers['sec-fetch-dest'] || '') === 'iframe';
+      if (embedded) {
+        const shop = typeof req.query.shop === 'string' ? req.query.shop : '';
+        const host = typeof req.query.host === 'string' ? req.query.host : '';
+        const q = new URLSearchParams({
+          shop,
+          host,
+          redirectUri: `${HOST}${authUrlForShop(shop, host)}`,
+        });
+        return res.redirect(302, `/exitiframe?${q.toString()}`);
+      }
+      return shopify.auth.begin()(req, res, next);
+    });
     app.get(
       shopify.config.auth.callbackPath,
       shopify.auth.callback(),
@@ -290,13 +318,12 @@ bootstrap()
         redirectUri = authUrlForShop(shop, host);
       }
 
+      // Plain top-level breakout — no App Bridge (avoids accounts.shopify.com in iframe).
       setEmbeddedCsp(res, shopify.api.utils.sanitizeShop(shop) || shop);
       res.type('html').send(`<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="shopify-api-key" content="${escapeHtml(API_KEY)}" />
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <title>${escapeHtml(APP_TITLE)} — autorizar</title>
   <style>
     body { font-family: Inter, system-ui, sans-serif; padding: 2rem; color: #202223; }
