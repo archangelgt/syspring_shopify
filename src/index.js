@@ -117,17 +117,24 @@ function authUrlForShop(shop, host) {
   return `/auth?${q.toString()}`;
 }
 
+function customInstallUrl(shop) {
+  // Custom distribution install (top-level Admin). Prefer over /auth when embedded.
+  const q = new URLSearchParams({ client_id: API_KEY });
+  if (shop) q.set('shop', normalizeShop(shop));
+  return `https://admin.shopify.com/oauth/install_custom_app?${q.toString()}`;
+}
+
 function renderAuthorizeBreakout(res, shop, host) {
-  const authPath = authUrlForShop(shop, host);
-  const authFull = `${HOST}${authPath}`;
-  // Do NOT load App Bridge here — it keeps OAuth inside Admin iframe and
-  // accounts.shopify.com refuses to connect (X-Frame-Options).
+  const authFull = `${HOST}${authUrlForShop(shop, host)}&breakout=1`;
+  const installFull = customInstallUrl(shop);
   setEmbeddedCsp(res, shop);
   res.status(200).type('html').send(`<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="shopify-api-key" content="${escapeHtml(API_KEY)}" />
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <title>Autorizar ${escapeHtml(APP_TITLE)}</title>
   <style>
     :root { --accent:#008060; --bg:#f6f6f7; --text:#202223; --muted:#6d7175; }
@@ -139,26 +146,48 @@ function renderAuthorizeBreakout(res, shop, host) {
       display:inline-block; margin-top:1rem; padding:0.75rem 1.25rem; background:var(--accent); color:#fff;
       font-weight:700; text-decoration:none; border-radius:8px; font-size:1rem;
     }
+    .btn.secondary { background:#5c6ac4; margin-left:0.35rem; }
     code { background:#f1f2f3; padding:0.1rem 0.35rem; border-radius:4px; font-size:0.85em; }
   </style>
 </head>
 <body>
   <div class="box">
     <h1>Autorizar ${escapeHtml(APP_TITLE)}</h1>
-    <p>Abriendo autorización fuera del Admin…</p>
+    <p>Hay que salir del iframe del Admin para autorizar.</p>
     <p>Tienda: <code>${escapeHtml(shop)}</code></p>
-    <a class="btn" id="auth-link" href="${escapeHtml(authFull)}" target="_top" rel="noopener">Instalar / Autorizar</a>
+    <p>
+      <a class="btn" id="auth-link" href="${escapeHtml(installFull)}" target="_top" rel="noopener">Instalar en Admin</a>
+      <a class="btn secondary" href="${escapeHtml(authFull)}" target="_top" rel="noopener">OAuth directo</a>
+    </p>
   </div>
   <script>
     (function () {
-      var url = ${JSON.stringify(authFull)};
+      var url = ${JSON.stringify(installFull)};
+      var host = ${JSON.stringify(host || '')};
+      var apiKey = ${JSON.stringify(API_KEY)};
+      function goTop(u) {
+        try {
+          if (window.top && window.top !== window.self) {
+            window.top.location.href = u;
+            return true;
+          }
+        } catch (e) {}
+        window.location.href = u;
+        return true;
+      }
       try {
-        if (window.top && window.top !== window.self) {
-          window.top.location.href = url;
-          return;
+        var AB = window['app-bridge'];
+        if (AB && host) {
+          var createApp = AB.default || AB;
+          var Redirect = (AB.actions && AB.actions.Redirect) || (createApp.actions && createApp.actions.Redirect);
+          if (Redirect) {
+            var app = createApp({ apiKey: apiKey, host: host, forceRedirect: true });
+            Redirect.create(app).dispatch(Redirect.Action.REMOTE, url);
+            return;
+          }
         }
       } catch (e) {}
-      window.location.href = url;
+      goTop(url);
     })();
   </script>
 </body>
@@ -281,17 +310,31 @@ bootstrap()
       });
     });
 
-    app.get(shopify.config.auth.path, (req, res, next) => {
+    app.get(shopify.config.auth.path, async (req, res, next) => {
+      const shopRaw = typeof req.query.shop === 'string' ? req.query.shop : '';
+      const shop = shopify.api.utils.sanitizeShop(shopRaw) || normalizeShop(shopRaw);
+      const hostRaw = typeof req.query.host === 'string' ? req.query.host : '';
+      const host = hostRaw ? shopify.api.utils.sanitizeHost(hostRaw) || hostRaw : '';
+
+      // Already installed → never bounce through OAuth/exitiframe again.
+      if (shop && req.query.reauth !== '1') {
+        const existing = await loadOfflineSession(shop);
+        if (existing) {
+          const q = new URLSearchParams({ shop });
+          if (host) q.set('host', host);
+          return res.redirect(302, `/?${q.toString()}`);
+        }
+      }
+
       const embedded =
-        req.query.embedded === '1' ||
-        String(req.headers['sec-fetch-dest'] || '') === 'iframe';
+        req.query.breakout !== '1' &&
+        (req.query.embedded === '1' ||
+          String(req.headers['sec-fetch-dest'] || '') === 'iframe');
       if (embedded) {
-        const shop = typeof req.query.shop === 'string' ? req.query.shop : '';
-        const host = typeof req.query.host === 'string' ? req.query.host : '';
         const q = new URLSearchParams({
-          shop,
-          host,
-          redirectUri: `${HOST}${authUrlForShop(shop, host)}`,
+          shop: shop || shopRaw,
+          host: host || hostRaw,
+          redirectUri: customInstallUrl(shop || shopRaw),
         });
         return res.redirect(302, `/exitiframe?${q.toString()}`);
       }
@@ -306,44 +349,81 @@ bootstrap()
       shopify.redirectToShopifyOrAppRoot()
     );
 
-    app.get('/exitiframe', (req, res) => {
-      const shop = typeof req.query.shop === 'string' ? req.query.shop : '';
-      const host = typeof req.query.host === 'string' ? req.query.host : '';
+    app.get('/exitiframe', async (req, res) => {
+      const shopRaw = typeof req.query.shop === 'string' ? req.query.shop : '';
+      const shop = shopify.api.utils.sanitizeShop(shopRaw) || normalizeShop(shopRaw);
+      const hostRaw = typeof req.query.host === 'string' ? req.query.host : '';
+      const host = hostRaw ? shopify.api.utils.sanitizeHost(hostRaw) || hostRaw : '';
+
+      if (shop) {
+        const existing = await loadOfflineSession(shop);
+        if (existing) {
+          const q = new URLSearchParams({ shop });
+          if (host) q.set('host', host);
+          return res.redirect(302, `/?${q.toString()}`);
+        }
+      }
+
       let redirectUri =
         typeof req.query.redirectUri === 'string' && req.query.redirectUri
           ? req.query.redirectUri
-          : authUrlForShop(shop, host);
+          : customInstallUrl(shop || shopRaw);
 
-      if (/^https?:\/\//i.test(redirectUri) && !redirectUri.startsWith(HOST)) {
-        redirectUri = authUrlForShop(shop, host);
+      // Only allow our host or Shopify Admin install URLs.
+      const allowed =
+        redirectUri.startsWith(HOST) ||
+        redirectUri.startsWith('https://admin.shopify.com/') ||
+        redirectUri.startsWith('/');
+      if (!allowed) {
+        redirectUri = customInstallUrl(shop || shopRaw);
+      }
+      if (redirectUri.startsWith('/')) {
+        redirectUri = `${HOST}${redirectUri}`;
       }
 
-      // Plain top-level breakout — no App Bridge (avoids accounts.shopify.com in iframe).
-      setEmbeddedCsp(res, shopify.api.utils.sanitizeShop(shop) || shop);
+      setEmbeddedCsp(res, shop || shopRaw);
       res.type('html').send(`<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
+  <meta name="shopify-api-key" content="${escapeHtml(API_KEY)}" />
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <title>${escapeHtml(APP_TITLE)} — autorizar</title>
   <style>
-    body { font-family: Inter, system-ui, sans-serif; padding: 2rem; color: #202223; }
-    a { color: #008060; font-weight: 600; }
+    body { font-family: Inter, system-ui, sans-serif; padding: 2rem; color: #202223; text-align:center; }
+    a.btn { display:inline-block; margin-top:1rem; padding:0.75rem 1.25rem; background:#008060; color:#fff; font-weight:700; text-decoration:none; border-radius:8px; }
   </style>
 </head>
 <body>
-  <p>Se requiere autorización. Si no redirige automáticamente,
-    <a id="cont" href="${escapeHtml(redirectUri)}" target="_top">continúa aquí</a>.
-  </p>
+  <p>Redirigiendo a la instalación de Shopify…</p>
+  <p><a class="btn" id="cont" href="${escapeHtml(redirectUri)}" target="_top" rel="noopener">Continuar instalación</a></p>
   <script>
     (function () {
       var url = ${JSON.stringify(redirectUri)};
+      var host = ${JSON.stringify(host || hostRaw || '')};
+      var apiKey = ${JSON.stringify(API_KEY)};
+      function goTop(u) {
+        try {
+          if (window.top && window.top !== window.self) {
+            window.top.location.href = u;
+            return;
+          }
+        } catch (e) {}
+        window.location.href = u;
+      }
       try {
-        if (window.top && window.top !== window.self) {
-          window.top.location.href = url;
-          return;
+        var AB = window['app-bridge'];
+        if (AB && host) {
+          var createApp = AB.default || AB;
+          var Redirect = (AB.actions && AB.actions.Redirect) || null;
+          if (Redirect) {
+            var app = createApp({ apiKey: apiKey, host: host, forceRedirect: true });
+            Redirect.create(app).dispatch(Redirect.Action.REMOTE, url);
+            return;
+          }
         }
       } catch (e) {}
-      window.location.href = url;
+      goTop(url);
     })();
   </script>
 </body>
