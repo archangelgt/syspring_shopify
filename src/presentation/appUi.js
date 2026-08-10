@@ -499,9 +499,30 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .form-row { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin:0.85rem 0; }
     .form-row input, .form-row select, textarea { font:inherit; padding:0.5rem 0.65rem; border:1px solid var(--border); border-radius:6px; }
     .form-row button, button[type=submit] { background:var(--accent); color:#fff; border:none; border-radius:6px; font-weight:600; padding:0.5rem 0.9rem; cursor:pointer; }
-    .btn-secondary { background:#5c6ac4 !important; }
+    button.btn-secondary,
+    .btn-secondary {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:0.35rem;
+      background:var(--accent) !important;
+      color:#fff !important;
+      border:none !important;
+      border-radius:6px;
+      font:inherit;
+      font-weight:600;
+      font-size:0.92rem;
+      line-height:1.25;
+      padding:0.5rem 0.9rem;
+      cursor:pointer;
+      text-decoration:none;
+      appearance:none;
+      -webkit-appearance:none;
+    }
+    button.btn-secondary:hover,
+    .btn-secondary:hover { filter:brightness(0.94); }
     .btn-sm { padding:0.25rem 0.55rem; font-size:0.8rem; }
-    .btn-danger { background:#d72c0d; color:#fff; border:none; border-radius:6px; cursor:pointer; }
+    .btn-danger { display:inline-flex; align-items:center; background:#d72c0d; color:#fff; border:none; border-radius:6px; font-weight:600; padding:0.5rem 0.9rem; cursor:pointer; }
     .table-wrap { overflow:auto; margin-top:0.75rem; max-width:100%; }
     table { width:100%; border-collapse:collapse; font-size:0.92rem; }
     th, td { text-align:left; padding:0.55rem 0.45rem; border-bottom:1px solid var(--border); vertical-align:top; }
@@ -542,7 +563,9 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .link-btn { color:var(--accent); font-weight:600; font-size:0.88rem; text-decoration:none; }
     .link-btn:hover { text-decoration:underline; }
     .home-actions { display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:1rem; align-items:center; }
-    .btn-ghost { display:inline-flex; align-items:center; padding:0.5rem 0.85rem; border-radius:6px; border:1px solid var(--border); background:#fff; color:var(--text); font-weight:600; text-decoration:none; font-size:0.92rem; }
+    .home-actions .btn-secondary,
+    .home-actions .btn-ghost { min-height:2.25rem; }
+    .btn-ghost { display:inline-flex; align-items:center; padding:0.5rem 0.85rem; border-radius:6px; border:1px solid var(--border); background:#fff; color:var(--text); font-weight:600; text-decoration:none; font-size:0.92rem; line-height:1.25; }
     .btn-ghost:hover { background:#f1f2f3; }
     .steps { margin:0.5rem 0 0.85rem; padding-left:1.2rem; color:var(--muted); }
     .steps li { margin:0.3rem 0; }
