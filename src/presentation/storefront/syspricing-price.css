@@ -15,7 +15,7 @@
 .syspricing-b2b-price .syspricing-compare,
 .syspricing-card-price .syspricing-compare {
   text-decoration: line-through;
-  color: #6d7175;
+  color: #d72c0d;
   font-weight: 500;
   font-size: 0.95em;
 }
@@ -24,7 +24,7 @@
 }
 .syspricing-b2b-price .syspricing-amount,
 .syspricing-card-price .syspricing-amount {
-  color: #0d6b56;
+  color: #111111;
   font-weight: 700;
 }
 .syspricing-b2b-price .syspricing-tag,
