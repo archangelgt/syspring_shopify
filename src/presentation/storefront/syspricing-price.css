@@ -1,41 +1,54 @@
 .syspricing-b2b-price {
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid #aee0bf;
-  background: #eaf7f0;
-  border-radius: 8px;
-  font-size: 1.05rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.55rem;
+  margin: 0.35rem 0 0.75rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.15rem;
   font-weight: 600;
   line-height: 1.35;
   word-break: break-word;
 }
+.syspricing-b2b-price .syspricing-compare {
+  text-decoration: line-through;
+  color: #6d7175;
+  font-weight: 500;
+  font-size: 1rem;
+}
+.syspricing-b2b-price .syspricing-compare[hidden] {
+  display: none !important;
+}
 .syspricing-b2b-price .syspricing-amount {
-  margin-left: 0.35rem;
   color: #0d6b56;
+  font-size: 1.2rem;
 }
 .syspricing-b2b-price .syspricing-tag {
-  margin-left: 0.5rem;
   font-size: 0.85rem;
   font-weight: 500;
   color: #6d7175;
 }
 .syspricing-b2b-price .syspricing-status {
   display: none;
-  margin-top: 0.35rem;
+  width: 100%;
+  margin-top: 0.25rem;
   font-size: 0.8rem;
   font-weight: 500;
 }
 .syspricing-b2b-price[hidden] {
   display: none !important;
 }
+/* When B2B is visible, hide the theme catalog price next to it */
+.syspricing-price-wrap:has(.syspricing-b2b-price:not([hidden])) .syspricing-catalog-fallback {
+  display: none !important;
+}
 @media (max-width: 560px) {
   .syspricing-b2b-price {
-    font-size: 1rem;
-    padding: 0.6rem 0.75rem;
+    font-size: 1.05rem;
   }
-  .syspricing-b2b-price .syspricing-tag {
-    display: inline-block;
-    margin-left: 0;
-    margin-top: 0.2rem;
+  .syspricing-b2b-price .syspricing-amount {
+    font-size: 1.1rem;
   }
 }

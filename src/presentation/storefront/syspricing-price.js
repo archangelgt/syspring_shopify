@@ -1,11 +1,12 @@
 /**
- * SYSPRICING storefront — precios B2B para cliente logueado.
- * Catalog price stays visible; B2B block only appears when a special price exists.
+ * SYSPRICING storefront — catalog (line-through) + B2B side by side.
  */
 (function () {
   function formatMoney(price, currency) {
     var n = Number(price);
     if (!Number.isFinite(n)) return String(price);
+    // Shopify money often comes in cents for GTQ variants via data attrs in some themes;
+    // our proxy returns major units. Liquid data-compare-price is in cents.
     var cur = String(currency || 'GTQ').toUpperCase();
     if (cur === 'GTQ') return 'Q' + n.toFixed(2);
     try {
@@ -13,6 +14,12 @@
     } catch (_) {
       return cur + ' ' + n.toFixed(2);
     }
+  }
+
+  function formatCompareMoney(cents, currency) {
+    var n = Number(cents);
+    if (!Number.isFinite(n)) return '';
+    return formatMoney(n / 100, currency);
   }
 
   function pickPrice(prices, variantId) {
@@ -25,6 +32,14 @@
     return prices[gid] || null;
   }
 
+  function setCatalogFallbackVisible(root, visible) {
+    var wrap = root.closest('.syspricing-price-wrap');
+    if (!wrap) return;
+    var fallback = wrap.querySelector('.syspricing-catalog-fallback');
+    if (!fallback) return;
+    fallback.style.display = visible ? '' : 'none';
+  }
+
   function boot(root) {
     if (!root || root.getAttribute('data-logged-in') !== '1') return;
     if (root.getAttribute('data-syspricing-booted') === '1') return;
@@ -32,8 +47,11 @@
 
     var proxy = root.getAttribute('data-proxy') || '/apps/syspricing/prices';
     var tags = root.getAttribute('data-customer-tags') || '';
+    var currency = root.getAttribute('data-currency') || 'GTQ';
+    var compareRaw = root.getAttribute('data-compare-price') || '';
     var amountEl = root.querySelector('.syspricing-amount');
     var tagEl = root.querySelector('.syspricing-tag');
+    var compareEl = root.querySelector('.syspricing-compare');
     var statusEl = root.querySelector('.syspricing-status');
     var lastInfo = null;
 
@@ -48,8 +66,13 @@
       clearStatus();
       if (amountEl) amountEl.textContent = '';
       if (tagEl) tagEl.textContent = '';
+      if (compareEl) {
+        compareEl.textContent = '';
+        compareEl.setAttribute('hidden', '');
+      }
       root.setAttribute('hidden', '');
       root.hidden = true;
+      setCatalogFallbackVisible(root, true);
     }
 
     function applyPrice(info) {
@@ -58,16 +81,30 @@
         return;
       }
       lastInfo = info;
-      var formatted = formatMoney(info.price, info.currency);
+      var formatted = formatMoney(info.price, info.currency || currency);
       if (amountEl) amountEl.textContent = formatted;
       if (tagEl) tagEl.textContent = info.matchedTag ? '(' + info.matchedTag + ')' : '';
+      if (compareEl) {
+        var compareText = formatCompareMoney(compareRaw, info.currency || currency);
+        if (compareText) {
+          compareEl.textContent = compareText;
+          compareEl.removeAttribute('hidden');
+        } else {
+          compareEl.setAttribute('hidden', '');
+        }
+      }
       clearStatus();
       root.removeAttribute('hidden');
       root.hidden = false;
+      setCatalogFallbackVisible(root, false);
     }
 
-    function loadForVariant(variantId) {
+    function loadForVariant(variantId, comparePrice) {
       if (!variantId) return;
+      if (comparePrice != null && comparePrice !== '') {
+        compareRaw = String(comparePrice);
+        root.setAttribute('data-compare-price', compareRaw);
+      }
       clearStatus();
       var params = new URLSearchParams();
       params.set('variant_ids', String(variantId));
@@ -112,7 +149,7 @@
     document.addEventListener('variant:change', function (ev) {
       var v = ev.detail && (ev.detail.variant || ev.detail);
       if (v && v.id) {
-        loadForVariant(v.id);
+        loadForVariant(v.id, v.price);
         root.setAttribute('data-variant-id', v.id);
       }
     });

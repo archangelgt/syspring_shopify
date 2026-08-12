@@ -184,9 +184,11 @@
           <h1 class="product__title h0" {{ block.shopify_attributes }}>{{ product.title | escape }}</h1>
 
         {%- when 'price' -%}
-          <div {{ block.shopify_attributes }}>
-            {%- render 'product-price', target: current_variant, variant: current_variant, id: section.id, text_size_class: 'body-text-lg' -%}
+          <div class="syspricing-price-wrap" {{ block.shopify_attributes }}>
             {%- render 'syspricing-b2b-price', product_resource: product -%}
+            <div class="syspricing-catalog-fallback">
+              {%- render 'product-price', target: current_variant, variant: current_variant, id: section.id, text_size_class: 'body-text-lg' -%}
+            </div>
           </div>
 
         {%- when 'tax_info' -%}

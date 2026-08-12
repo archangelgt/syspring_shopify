@@ -1,6 +1,5 @@
 {%- doc -%}
-  SYSPRICING B2B price — tag = price list.
-  Shows only when customer is logged in. Catalog price stays in product-price.
+  SYSPRICING B2B price — original (line-through) + B2B side by side when available.
   {% render 'syspricing-b2b-price', product_resource: product_resource %}
 {%- enddoc -%}
 
@@ -18,6 +17,7 @@
   assign best_tag = nil
   assign best_priority = -999999
   assign tags_csv = customer.tags | join: ','
+  assign catalog_price = sp_variant.price
 
   if prices_map != blank
     for tag in customer.tags
@@ -46,10 +46,14 @@
   data-variant-id="{{ sp_variant.id }}"
   data-customer-id="{{ customer.id }}"
   data-customer-tags="{{ tags_csv | escape }}"
+  data-compare-price="{{ catalog_price }}"
+  data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
   data-proxy="/apps/syspricing/prices"
   {% if best_price == blank %}hidden{% endif %}
 >
-  <span class="syspricing-label">Tu precio:</span>
+  <span class="syspricing-compare"{% if best_price == blank %} hidden{% endif %}>
+    {{ catalog_price | money }}
+  </span>
   <span class="syspricing-amount">
     {%- if best_price != blank -%}Q{{ best_price }}{%- endif -%}
   </span>
@@ -57,5 +61,5 @@
   <div class="syspricing-status" style="display:none"></div>
 </div>
 
-{{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css' | stylesheet_tag }}
-<script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=5" defer></script>
+{{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=6' | stylesheet_tag }}
+<script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=6" defer></script>
