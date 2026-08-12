@@ -1,0 +1,170 @@
+{%- liquid
+  if section.settings.enable_filtering or section.settings.enable_sorting
+    echo 'component-facets.css' | asset_url | stylesheet_tag
+    render 'facets', results: collection, type: 'desktop', enable_filtering: section.settings.enable_filtering, enable_sorting: section.settings.enable_sorting, image_filter_layout: section.settings.image_filter_layout
+  endif
+-%}
+
+<div id="CollectionProductGrid">
+
+  {%- paginate collection.products by section.settings.products_number -%}
+    
+    <div class="gutter--on">
+
+      <div id="main-collection-product-grid" data-id="{{ section.id }}" class="collection collection--{{ settings.grid_style }} collection--grid mount-collection">
+
+        {%- for product in collection.products -%}
+          {%- liquid
+            if forloop.index <= 3
+              assign preload = true
+            else
+              assign preload = false
+            endif
+
+            assign sp_variant = product.selected_or_first_available_variant
+            assign sp_best_price = nil
+            assign sp_best_tag = nil
+            assign sp_best_priority = -999999
+            if customer != blank
+              assign sp_prices_map = sp_variant.metafields.syspricing.prices.value
+              assign sp_config = shop.metafields.syspricing.function-config.value
+              if sp_prices_map != blank
+                for tag in customer.tags
+                  assign tag_key = tag | strip
+                  assign candidate = sp_prices_map[tag_key]
+                  if candidate == blank
+                    continue
+                  endif
+                  assign prio = 0
+                  if sp_config != blank and sp_config.priority != blank and sp_config.priority[tag_key] != blank
+                    assign prio = sp_config.priority[tag_key] | plus: 0
+                  endif
+                  if sp_best_price == blank or prio > sp_best_priority
+                    assign sp_best_price = candidate
+                    assign sp_best_tag = tag_key
+                    assign sp_best_priority = prio
+                  endif
+                endfor
+              endif
+            endif
+          -%}
+          <div
+            class="syspricing-grid-item{% if customer != blank and sp_best_price != blank %} syspricing-grid-item--b2b{% endif %}"
+            data-product-id="{{ product.id }}"
+            data-variant-id="{{ sp_variant.id }}"
+            data-compare-price="{{ sp_variant.price }}"
+            {% if customer != blank and sp_best_price != blank %}
+              data-has-b2b="1"
+              data-b2b-price="{{ sp_best_price }}"
+              data-b2b-tag="{{ sp_best_tag | escape }}"
+            {% endif %}
+          >
+            {%- render 'product-item', product_collection: collection, product: product, index: forloop.index, preload: preload -%}
+          </div>
+        {%- else -%}
+          {%- if collection.filters != empty -%}
+            {%- liquid
+              assign sort_by = collection.sort_by | default: collection.default_sort_by
+              assign terms = collection.terms | escape
+              if collection.current_vendor
+                assign terms = collection.current_vendor | escape
+              endif
+              assign results_url = '?q=' | append: terms | append: '&options%5Bprefix%5D=last&sort_by=' | append: sort_by
+            -%}
+              <p style="margin-inline-start:calc(var(--grid-gutter)/2); margin-top: 1.5em" class="no-content-message">
+                {{ 'collections.empty' | t }}<br/>
+                {{ 'collections.use_fewer_filters_html' | t: link: results_url, class: 'button--text' }}
+              </p>
+          {%- else %}
+            <p style="margin-inline-start:calc(var(--grid-gutter)/2)" class="no-content-message">
+              {{ 'products.grid.no_products_text' | t }}
+            </p>
+          {%- endif -%}
+        {%- endfor -%}
+
+      </div>
+
+      {%- liquid
+        if paginate.pages > 1
+          render 'pagination', paginate: paginate
+        endif
+      -%}
+
+    </div>
+
+  {%- endpaginate -%}
+
+</div>
+
+{%- if customer -%}
+  {{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=7' | stylesheet_tag }}
+  <script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=7" defer></script>
+{%- endif -%}
+
+{%- if section.settings.enable_filtering or section.settings.enable_sorting -%}
+  <sidebar-drawer data-overlay="sidebar" class="collection__filters sidebar-parent-element" style="display:none">
+    <div class="sidebar-element sidebar-element--right-side">
+      <span class="collection__filters-close sidebar-close-element" data-js-close tabindex="0">
+        <span class="visually-hidden">{{ 'general.accessibility_labels.close' | t }}</span>
+        <span aria-hidden="true">{%- render 'theme-symbols', icon: 'close' -%}</span>
+      </span>
+      <div class="collection__filters-holder sidebar-content-element">
+        <div class="collection__filters-title body-text-sm sidebar-title-element"><span>{{ 'collections.filter_and_sort' | t }}</span></div>
+        {%- render 'facets', results: collection, enable_filtering: section.settings.enable_filtering, enable_sorting: section.settings.enable_sorting, type: 'mobile', image_filter_layout: section.settings.image_filter_layout -%}
+      </div>
+    </div>
+  </sidebar-drawer>
+  <script src="{{ 'component-facets.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+
+{% schema %}
+  {
+    "name": "t:sections.main-collection-product-grid.name",
+    "class": "main-collection-product-grid",
+    "settings": [
+      {
+        "type": "range",
+        "id": "products_number",
+        "label": "t:sections.main-collection-product-grid.settings.products_per_page.label",
+        "min": 12,
+        "max": 48,
+        "step": 4,
+        "default": 24
+      },
+      {
+        "type": "header",
+        "content": "t:sections.main-collection-product-grid.settings.header__1.content"
+      },
+      {
+        "id": "enable_filtering",
+        "type": "checkbox",
+        "label": "t:sections.main-collection-product-grid.settings.enable_filtering.label",
+        "default": true,
+        "info": "t:sections.main-collection-product-grid.settings.enable_filtering.info"
+      },
+      {
+        "id": "enable_sorting",
+        "type": "checkbox",
+        "label": "t:sections.main-collection-product-grid.settings.enable_sorting.label",
+        "default": true
+      },
+      {
+        "type": "select",
+        "id": "image_filter_layout",
+        "label": "t:sections.main-collection-product-grid.settings.image_filter_layout.label",
+        "options": [
+          {
+            "value": "onecolumn",
+            "label": "t:sections.local-extra-words.sections.columns.option__0"
+          },
+          {
+            "value": "twocolumns",
+            "label": "t:sections.local-extra-words.sections.columns.option__1"
+          }
+        ],
+        "default": "twocolumns"
+      }
+    ]
+  }
+{% endschema %}

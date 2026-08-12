@@ -12,21 +12,24 @@
   line-height: 1.35;
   word-break: break-word;
 }
-.syspricing-b2b-price .syspricing-compare {
+.syspricing-b2b-price .syspricing-compare,
+.syspricing-card-price .syspricing-compare {
   text-decoration: line-through;
   color: #6d7175;
   font-weight: 500;
-  font-size: 1rem;
+  font-size: 0.95em;
 }
 .syspricing-b2b-price .syspricing-compare[hidden] {
   display: none !important;
 }
-.syspricing-b2b-price .syspricing-amount {
+.syspricing-b2b-price .syspricing-amount,
+.syspricing-card-price .syspricing-amount {
   color: #0d6b56;
-  font-size: 1.2rem;
+  font-weight: 700;
 }
-.syspricing-b2b-price .syspricing-tag {
-  font-size: 0.85rem;
+.syspricing-b2b-price .syspricing-tag,
+.syspricing-card-price .syspricing-tag {
+  font-size: 0.85em;
   font-weight: 500;
   color: #6d7175;
 }
@@ -40,9 +43,17 @@
 .syspricing-b2b-price[hidden] {
   display: none !important;
 }
-/* When B2B is visible, hide the theme catalog price next to it */
 .syspricing-price-wrap:has(.syspricing-b2b-price:not([hidden])) .syspricing-catalog-fallback {
   display: none !important;
+}
+.syspricing-grid-item {
+  display: contents;
+}
+.syspricing-card-price {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.4rem;
 }
 @media (max-width: 560px) {
   .syspricing-b2b-price {

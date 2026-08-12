@@ -1,12 +1,11 @@
 /**
  * SYSPRICING storefront — catalog (line-through) + B2B side by side.
+ * Works on PDP (.syspricing-b2b-price) and collection cards (.syspricing-grid-item).
  */
 (function () {
   function formatMoney(price, currency) {
     var n = Number(price);
     if (!Number.isFinite(n)) return String(price);
-    // Shopify money often comes in cents for GTQ variants via data attrs in some themes;
-    // our proxy returns major units. Liquid data-compare-price is in cents.
     var cur = String(currency || 'GTQ').toUpperCase();
     if (cur === 'GTQ') return 'Q' + n.toFixed(2);
     try {
@@ -38,6 +37,54 @@
     var fallback = wrap.querySelector('.syspricing-catalog-fallback');
     if (!fallback) return;
     fallback.style.display = visible ? '' : 'none';
+  }
+
+  function findCardPriceNode(item) {
+    var selectors = [
+      '.price',
+      '.product-item__price',
+      '.product-price',
+      '.card-price',
+      '[data-product-price]',
+      '.price__regular',
+      '.price-item--regular'
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var el = item.querySelector(selectors[i]);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  function applyGridItem(item) {
+    if (!item || item.getAttribute('data-syspricing-grid-booted') === '1') return;
+    if (item.getAttribute('data-has-b2b') !== '1') return;
+    item.setAttribute('data-syspricing-grid-booted', '1');
+
+    var b2b = item.getAttribute('data-b2b-price');
+    var tag = item.getAttribute('data-b2b-tag') || '';
+    var compareRaw = item.getAttribute('data-compare-price') || '';
+    if (b2b == null || b2b === '') return;
+
+    var priceNode = findCardPriceNode(item);
+    if (!priceNode) return;
+
+    var compareText = formatCompareMoney(compareRaw, 'GTQ');
+    var b2bText = formatMoney(Number(b2b), 'GTQ');
+    var html =
+      '<span class="syspricing-card-price">' +
+      (compareText ? '<span class="syspricing-compare">' + compareText + '</span> ' : '') +
+      '<span class="syspricing-amount">' +
+      b2bText +
+      '</span>' +
+      (tag ? ' <span class="syspricing-tag">(' + tag + ')</span>' : '') +
+      '</span>';
+    priceNode.innerHTML = html;
+  }
+
+  function bootGrid() {
+    var items = document.querySelectorAll('.syspricing-grid-item[data-has-b2b="1"]');
+    for (var i = 0; i < items.length; i++) applyGridItem(items[i]);
   }
 
   function boot(root) {
@@ -158,11 +205,23 @@
   function init() {
     var nodes = document.querySelectorAll('#syspricing-b2b-price, .syspricing-b2b-price');
     for (var i = 0; i < nodes.length; i++) boot(nodes[i]);
+    bootGrid();
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
+  }
+
+  // Facets / infinite loads often replace the grid
+  document.addEventListener('shopify:section:load', init);
+  var grid = document.getElementById('CollectionProductGrid');
+  if (grid && window.MutationObserver) {
+    var t = null;
+    new MutationObserver(function () {
+      clearTimeout(t);
+      t = setTimeout(bootGrid, 80);
+    }).observe(grid, { childList: true, subtree: true });
   }
 })();
