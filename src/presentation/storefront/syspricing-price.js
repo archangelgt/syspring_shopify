@@ -1,5 +1,6 @@
 /**
  * SYSPRICING storefront — precios B2B para cliente logueado.
+ * Catalog price stays visible; B2B block only appears when a special price exists.
  */
 (function () {
   function formatMoney(price, currency) {
@@ -24,27 +25,6 @@
     return prices[gid] || null;
   }
 
-  function replaceCatalogPrice(root, formatted) {
-    var scopes = [];
-    if (root.parentElement) scopes.push(root.parentElement);
-    var form = root.closest('form[action*="/cart/add"], product-form, .product-form, .product__info');
-    if (form) scopes.push(form);
-    scopes.push(document);
-
-    for (var s = 0; s < scopes.length; s++) {
-      var nodes = scopes[s].querySelectorAll(
-        '.price, .price__regular, .price-item--regular, [data-product-price], .product__price'
-      );
-      for (var i = 0; i < nodes.length; i++) {
-        var el = nodes[i];
-        if (el.closest('#syspricing-b2b-price, .syspricing-b2b-price')) continue;
-        if (el.children.length > 2) continue;
-        el.textContent = formatted;
-      }
-      if (nodes.length) break;
-    }
-  }
-
   function boot(root) {
     if (!root || root.getAttribute('data-logged-in') !== '1') return;
     if (root.getAttribute('data-syspricing-booted') === '1') return;
@@ -57,31 +37,38 @@
     var statusEl = root.querySelector('.syspricing-status');
     var lastInfo = null;
 
-    function setStatus(msg, isError) {
+    function clearStatus() {
       if (!statusEl) return;
-      statusEl.textContent = msg || '';
-      statusEl.style.display = msg ? 'block' : 'none';
-      statusEl.style.color = isError ? '#d72c0d' : '#6d7175';
+      statusEl.textContent = '';
+      statusEl.style.display = 'none';
+    }
+
+    function hideB2b() {
+      lastInfo = null;
+      clearStatus();
+      if (amountEl) amountEl.textContent = '';
+      if (tagEl) tagEl.textContent = '';
+      root.setAttribute('hidden', '');
+      root.hidden = true;
     }
 
     function applyPrice(info) {
-      lastInfo = info;
       if (!info || info.price == null || info.price === '') {
-        setStatus('No hay precio especial para este producto', true);
+        hideB2b();
         return;
       }
+      lastInfo = info;
       var formatted = formatMoney(info.price, info.currency);
       if (amountEl) amountEl.textContent = formatted;
-      if (tagEl && info.matchedTag) tagEl.textContent = '(' + info.matchedTag + ')';
-      setStatus('');
+      if (tagEl) tagEl.textContent = info.matchedTag ? '(' + info.matchedTag + ')' : '';
+      clearStatus();
       root.removeAttribute('hidden');
       root.hidden = false;
-      replaceCatalogPrice(root, formatted);
     }
 
     function loadForVariant(variantId) {
       if (!variantId) return;
-      setStatus('Cargando precio…', false);
+      clearStatus();
       var params = new URLSearchParams();
       params.set('variant_ids', String(variantId));
       if (tags) params.set('tags', tags);
@@ -90,15 +77,15 @@
 
       fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
         .then(function (r) {
-          if (!r.ok) throw new Error('No se pudo cargar el precio');
+          if (!r.ok) throw new Error('proxy');
           return r.json();
         })
         .then(function (body) {
-          var prices = (body && body.data && body.data.prices) || {};
           if (body && body.error) {
-            setStatus('No se pudo cargar el precio', true);
+            hideB2b();
             return;
           }
+          var prices = (body && body.data && body.data.prices) || {};
           applyPrice(pickPrice(prices, variantId));
           setTimeout(function () {
             if (lastInfo) applyPrice(lastInfo);
@@ -108,7 +95,7 @@
           }, 1200);
         })
         .catch(function () {
-          setStatus('No se pudo cargar el precio', true);
+          hideB2b();
         });
     }
 

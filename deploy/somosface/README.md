@@ -7,7 +7,7 @@ Instancia aislada para `somosface.myshopify.com`.
 | Host | `https://syspricing.shopify.somosface.erpsys.pro` |
 | Puerto host | **3012** → contenedor `:3000` |
 | Contenedor | `erpsys-syspricing-somosface` |
-| Carpeta servidor (sugerida) | `/opt/erpsys/syspricing-somosface` |
+| Carpeta servidor | `/var/www/erpsys-v1-docker/docker/syspricing_somosface` |
 | Rama | `deploy/somosface` |
 
 La app Shopify original está en Custom distribution anclada a `seraph-systems.myshopify.com` (Plus org). SomosFace necesita **otra app** en Partners con Custom distribution → `somosface.myshopify.com`.
@@ -31,12 +31,10 @@ syspricing.shopify.somosface.erpsys.pro  →  mismo IP que syspricing.shopify.er
 ## 3. Carpeta en el servidor
 
 ```bash
-# Junto a la instancia Seraph (puerto 3011), carpeta nueva:
-sudo mkdir -p /opt/erpsys/syspricing-somosface
-cd /opt/erpsys/syspricing-somosface
-git clone -b deploy/somosface https://github.com/archangelgt/syspring_shopify.git .
-cp .env.example .env
-# editar SHOPIFY_API_KEY / SHOPIFY_API_SECRET / HOST
+# En erpsys.pro, junto a docker/syspricing (puerto 3011):
+cd /var/www/erpsys-v1-docker/docker/syspricing_somosface
+# rama deploy/somosface ya clonada
+# editar .env: SHOPIFY_API_KEY / SHOPIFY_API_SECRET (app Partners NUEVA)
 docker compose up -d --build
 curl -sS http://127.0.0.1:3012/health
 ```

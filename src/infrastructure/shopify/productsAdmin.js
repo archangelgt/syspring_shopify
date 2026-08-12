@@ -191,7 +191,169 @@ function createProductsAdmin({ getAdminClient }) {
     return out;
   }
 
-  return { search, getByIds, listAll, numericId };
+  function toCollectionGid(id) {
+    const s = String(id || '');
+    if (!s) return '';
+    if (s.startsWith('gid://')) return s;
+    return `gid://shopify/Collection/${s}`;
+  }
+
+  async function listCollections(shop, { query = '', first = 100 } = {}) {
+    const client = await clientOrThrow(shop);
+    const q = String(query || '').trim();
+    const data = await client.request(
+      `#graphql
+      query ListCollections($first: Int!, $query: String) {
+        collections(first: $first, query: $query, sortKey: TITLE) {
+          edges {
+            node {
+              id
+              title
+              handle
+              productsCount {
+                count
+              }
+            }
+          }
+        }
+      }`,
+      {
+        variables: {
+          first: Math.min(Math.max(Number(first) || 100, 1), 250),
+          query: q || null,
+        },
+      }
+    );
+
+    if (data.errors?.length) {
+      throw new DomainError(
+        data.errors[0].message || 'Collection list failed',
+        'SHOPIFY_ERROR',
+        502
+      );
+    }
+
+    return (data.data?.collections?.edges || []).map((e) => ({
+      id: e.node.id,
+      title: e.node.title,
+      handle: e.node.handle,
+      productsCount: Number(e.node.productsCount?.count || 0),
+    }));
+  }
+
+  async function listByCollection(
+    shop,
+    { collectionId = '', handle = '', maxProducts = 2500 } = {}
+  ) {
+    const client = await clientOrThrow(shop);
+    const gid = toCollectionGid(collectionId);
+    const collectionHandle = String(handle || '').trim();
+    if (!gid && !collectionHandle) {
+      throw new DomainError('collectionId or handle required', 'VALIDATION', 400);
+    }
+
+    const productSelection = `
+      id
+      title
+      handle
+      products(first: $first, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node {
+            id
+            title
+            variants(first: 100) {
+              edges {
+                node {
+                  id
+                  title
+                  displayName
+                  sku
+                  price
+                  metafield(namespace: "syspricing", key: "prices") {
+                    value
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const out = [];
+    let cursor = null;
+    let guard = 0;
+    const pageSize = 50;
+    let collectionMeta = null;
+
+    while (out.length < maxProducts && guard < 100) {
+      guard += 1;
+      const data = gid
+        ? await client.request(
+            `#graphql
+            query CollectionProductsById($id: ID!, $first: Int!, $after: String) {
+              collection(id: $id) {
+                ${productSelection}
+              }
+            }`,
+            { variables: { id: gid, first: pageSize, after: cursor } }
+          )
+        : await client.request(
+            `#graphql
+            query CollectionProductsByHandle(
+              $identifier: CollectionIdentifierInput!
+              $first: Int!
+              $after: String
+            ) {
+              collectionByIdentifier(identifier: $identifier) {
+                ${productSelection}
+              }
+            }`,
+            {
+              variables: {
+                identifier: { handle: collectionHandle },
+                first: pageSize,
+                after: cursor,
+              },
+            }
+          );
+
+      if (data.errors?.length) {
+        throw new DomainError(
+          data.errors[0].message || 'Collection products failed',
+          'SHOPIFY_ERROR',
+          502
+        );
+      }
+
+      const coll = data.data?.collection || data.data?.collectionByIdentifier;
+      if (!coll) {
+        throw new DomainError('Collection not found', 'NOT_FOUND', 404);
+      }
+      if (!collectionMeta) {
+        collectionMeta = { id: coll.id, title: coll.title, handle: coll.handle };
+      }
+
+      for (const edge of coll.products?.edges || []) {
+        out.push(mapProductNode(edge.node));
+        if (out.length >= maxProducts) break;
+      }
+      if (!coll.products?.pageInfo?.hasNextPage) break;
+      cursor = coll.products.pageInfo.endCursor;
+    }
+
+    return { collection: collectionMeta, products: out };
+  }
+
+  return {
+    search,
+    getByIds,
+    listAll,
+    listCollections,
+    listByCollection,
+    numericId,
+  };
 }
 
 module.exports = { createProductsAdmin, numericId, toProductGid };

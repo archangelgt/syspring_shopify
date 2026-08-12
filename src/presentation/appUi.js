@@ -115,10 +115,10 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
       <p class="muted">Crea una lista por cada tag de cliente. El tag debe coincidir con el del cliente en Shopify.</p>
       <div id="flash"></div>
       <form id="pl-form" class="form-row">
-        <input name="tag" placeholder="TAG (ej. DPAÑUELOS)" required />
-        <input name="name" placeholder="Nombre (opcional)" />
-        <input name="currency" value="GTQ" style="max-width:5rem" />
-        <input name="priority" type="number" value="0" title="Priority" style="max-width:5rem" />
+        <input name="tag" class="input-grow" placeholder="TAG (ej. DPAÑUELOS)" required />
+        <input name="name" class="input-grow" placeholder="Nombre (opcional)" />
+        <input name="currency" class="input-sm" value="GTQ" />
+        <input name="priority" class="input-sm" type="number" value="0" title="Priority" />
         <select name="status">
           <option value="draft">draft</option>
           <option value="active" selected>active</option>
@@ -133,11 +133,12 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
       <p class="muted">Asigna el precio fijo de cada producto por lista. El % muestra el descuento frente al precio de catálogo.</p>
       <div id="flash"></div>
       <form id="prod-search" class="form-row">
-        <input name="q" placeholder="Search product by name, SKU" style="min-width:16rem" />
+        <input name="q" class="input-grow" placeholder="Search product by name, SKU" />
         <button type="submit">Buscar</button>
         <button type="button" id="btn-save-matrix" class="btn-secondary">Guardar cambios</button>
       </form>
       <div id="matrix-wrap" class="table-wrap matrix"><p class="muted">Busca productos para editar precios.</p></div>
+      <p class="scroll-hint">Desliza horizontalmente para ver todas las listas.</p>
     `;
   } else if (active === 'import') {
     panel = `
@@ -147,19 +148,45 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
         — también acepta el CSV largo <code>sku,variant_id,tag,price</code>.
       </p>
       <div id="flash"></div>
-      <div class="home-actions" style="margin:0 0 0.75rem">
-        <button type="button" id="btn-export-csv" class="btn-secondary">Exportar Excel</button>
-        <label class="btn-ghost" style="cursor:pointer;margin:0">
-          Subir Excel/CSV
-          <input type="file" id="csv-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" />
-        </label>
+      <div class="export-collections">
+        <h3 class="section-title">Exportar</h3>
+        <div class="form-row export-toolbar" style="margin:0 0 0.5rem">
+          <input type="search" id="collection-filter" class="input-grow" placeholder="Filtrar colecciones…" />
+          <button type="button" id="btn-expand-collections" class="btn-ghost">Expandir</button>
+          <button type="button" id="btn-collapse-collections" class="btn-ghost">Colapsar</button>
+          <button type="button" id="btn-refresh-collections" class="btn-ghost">Actualizar</button>
+          <button type="button" id="btn-export-csv" class="btn-secondary">Exportar Excel</button>
+        </div>
+        <div id="collection-tree" class="collection-tree" aria-label="Colecciones">
+          <p class="muted">Cargando colecciones…</p>
+        </div>
+        <p class="muted" id="collection-selection-hint" style="margin:0.45rem 0 0.75rem">
+          Sin selección = todo el catálogo. Marca una o varias colecciones para exportar solo esas.
+        </p>
       </div>
-      <form id="csv-form">
-        <textarea name="csv" rows="12" style="width:100%;font-family:ui-monospace,monospace"
-          placeholder="product_id,variant_id,variant_name,sku,original_price,DFACE,DPAÑUELOS&#10;1043…,5577…,BOLSA - Default Title,,15,,,80.77"></textarea>
-        <button type="submit" style="margin-top:0.75rem">Importar</button>
-      </form>
-      <pre id="csv-result" class="card" style="display:none;white-space:pre-wrap"></pre>
+      <div class="import-panel">
+        <h3 class="section-title">Importar</h3>
+        <div id="import-dropzone" class="import-dropzone" tabindex="0">
+          <input type="file" id="import-file" accept=".xlsx,.xls,.csv,text/csv" hidden />
+          <div class="import-dropzone-inner">
+            <i class="fa-solid fa-file-arrow-up"></i>
+            <p><strong class="drop-desktop">Arrastra un Excel/CSV</strong><strong class="drop-mobile">Toca para subir Excel/CSV</strong> o <button type="button" id="btn-pick-import" class="linkish">elige un archivo</button></p>
+            <p class="muted">.xlsx · .xls · .csv</p>
+          </div>
+        </div>
+        <div id="import-file-meta" class="import-file-meta" style="display:none"></div>
+        <div id="import-preview-wrap" class="table-wrap import-preview-wrap" style="display:none">
+          <table id="import-preview" class="import-preview-table"><thead></thead><tbody></tbody></table>
+        </div>
+        <p class="scroll-hint" id="import-scroll-hint" hidden>Desliza horizontalmente para ver más columnas.</p>
+        <p id="import-preview-note" class="muted" style="display:none;margin:0.4rem 0 0"></p>
+        <div id="import-status" class="alert" style="display:none;margin:0.65rem 0 0"></div>
+        <div class="form-row" id="import-actions" style="display:none;margin-top:0.75rem">
+          <button type="button" id="btn-clear-import" class="btn-ghost">Quitar archivo</button>
+          <button type="button" id="btn-run-import" class="btn-secondary" onclick="window.__syspricingRunImport&&window.__syspricingRunImport();return false;">Importar</button>
+        </div>
+        <pre id="csv-result" class="card" style="display:none;white-space:pre-wrap"></pre>
+      </div>
     `;
   } else if (active === 'customers') {
     panel = `
@@ -167,7 +194,7 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
       <p class="muted">Consulta qué listas coinciden con los tags de cada cliente. Los tags se gestionan en Shopify Admin.</p>
       <div id="flash"></div>
       <form id="cust-search" class="form-row">
-        <input name="q" placeholder="email, nombre…" style="min-width:14rem" />
+        <input name="q" class="input-grow" placeholder="email, nombre…" />
         <button type="submit">Buscar</button>
       </form>
       <div id="cust-list" class="table-wrap"><p class="muted">Busca para listar clientes.</p></div>
@@ -410,20 +437,6 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
   }
 
   if (TAB === 'import') {
-    document.getElementById('csv-form').onsubmit = function (ev) {
-      ev.preventDefault();
-      var fd = new FormData(ev.target);
-      api('/import/csv', {
-        method: 'POST',
-        body: JSON.stringify({ csv: fd.get('csv') })
-      }).then(function (res) {
-        flash('Import completado (' + ((res.data && res.data.format) || 'ok') + ')', 'ok');
-        var el = document.getElementById('csv-result');
-        el.style.display = 'block';
-        el.textContent = JSON.stringify(res.data, null, 2);
-      }).catch(function (e) { flash(e.message, 'err'); });
-    };
-
     function downloadBase64(b64, filename, mime) {
       var bin = atob(b64);
       var bytes = new Uint8Array(bin.length);
@@ -439,13 +452,551 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
       URL.revokeObjectURL(url);
     }
 
+    var importPending = null;
+    var PREVIEW_MAX_ROWS = 40;
+    var PREVIEW_MAX_COLS = 24;
+
+    function setImportStatus(msg, kind) {
+      var el = document.getElementById('import-status');
+      if (el) {
+        if (!msg) {
+          el.style.display = 'none';
+          el.textContent = '';
+          el.className = 'alert';
+        } else {
+          el.style.display = 'block';
+          el.className = 'alert ' + (kind || 'ok');
+          el.textContent = msg;
+        }
+      }
+      flash(msg || '', kind || 'ok');
+    }
+
+    function rememberPending(pending) {
+      importPending = pending || null;
+      try { window.__syspricingImportPending = importPending; } catch (e) {}
+    }
+
+    function parseCsvPreview(text) {
+      var rows = [];
+      var i = 0;
+      var cur = '';
+      var row = [];
+      var inQuotes = false;
+      var s = String(text || '').replace(/^\\uFEFF/, '');
+      while (i < s.length) {
+        var ch = s[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (s[i + 1] === '"') { cur += '"'; i += 2; continue; }
+            inQuotes = false; i += 1; continue;
+          }
+          cur += ch; i += 1; continue;
+        }
+        if (ch === '"') { inQuotes = true; i += 1; continue; }
+        if (ch === ',') { row.push(cur); cur = ''; i += 1; continue; }
+        if (ch === '\\n') {
+          row.push(cur); rows.push(row); row = []; cur = ''; i += 1; continue;
+        }
+        if (ch === '\\r') { i += 1; continue; }
+        cur += ch; i += 1;
+      }
+      if (cur.length || row.length) { row.push(cur); rows.push(row); }
+      return rows.filter(function (r) { return r.some(function (c) { return String(c || '').trim() !== ''; }); });
+    }
+
+    function loadXlsxLib() {
+      if (window.XLSX) return Promise.resolve(window.XLSX);
+      return new Promise(function (resolve, reject) {
+        var existing = document.querySelector('script[data-syspricing-xlsx]');
+        if (existing) {
+          existing.addEventListener('load', function () { resolve(window.XLSX); });
+          existing.addEventListener('error', function () { reject(new Error('No se pudo cargar SheetJS')); });
+          return;
+        }
+        var s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        s.async = true;
+        s.dataset.syspricingXlsx = '1';
+        s.onload = function () { resolve(window.XLSX); };
+        s.onerror = function () { reject(new Error('No se pudo cargar SheetJS')); };
+        document.head.appendChild(s);
+      });
+    }
+
+    function arrayBufferToBase64(buf) {
+      var bytes = new Uint8Array(buf);
+      var chunk = 0x8000;
+      var binary = '';
+      for (var i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return btoa(binary);
+    }
+
+    function clearImportPreview() {
+      rememberPending(null);
+      var fileInput = document.getElementById('import-file');
+      if (fileInput) fileInput.value = '';
+      var meta = document.getElementById('import-file-meta');
+      var wrap = document.getElementById('import-preview-wrap');
+      var note = document.getElementById('import-preview-note');
+      var actions = document.getElementById('import-actions');
+      var result = document.getElementById('csv-result');
+      var scrollHint = document.getElementById('import-scroll-hint');
+      if (meta) { meta.style.display = 'none'; meta.innerHTML = ''; }
+      if (wrap) wrap.style.display = 'none';
+      if (note) { note.style.display = 'none'; note.textContent = ''; }
+      if (actions) actions.style.display = 'none';
+      if (result) { result.style.display = 'none'; result.textContent = ''; }
+      if (scrollHint) scrollHint.hidden = true;
+      setImportStatus('', 'ok');
+      var zone = document.getElementById('import-dropzone');
+      if (zone) zone.classList.remove('has-file');
+      var runBtn = document.getElementById('btn-run-import');
+      if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Importar'; }
+    }
+
+    function renderImportPreview(aoa, fileName, kind) {
+      var headers = (aoa[0] || []).map(function (h) { return String(h == null ? '' : h); });
+      var dataRows = aoa.slice(1);
+      var showCols = Math.min(headers.length || (dataRows[0] || []).length, PREVIEW_MAX_COLS);
+      var showRows = dataRows.slice(0, PREVIEW_MAX_ROWS);
+      var table = document.getElementById('import-preview');
+      var thead = table.querySelector('thead');
+      var tbody = table.querySelector('tbody');
+      var headHtml = '<tr>';
+      for (var c = 0; c < showCols; c++) {
+        headHtml += '<th>' + esc(headers[c] || ('Col ' + (c + 1))) + '</th>';
+      }
+      if ((headers.length || (dataRows[0] || []).length) > PREVIEW_MAX_COLS) {
+        headHtml += '<th>…</th>';
+      }
+      headHtml += '</tr>';
+      thead.innerHTML = headHtml;
+      var bodyHtml = '';
+      showRows.forEach(function (row) {
+        bodyHtml += '<tr>';
+        for (var j = 0; j < showCols; j++) {
+          bodyHtml += '<td>' + esc(row[j] == null ? '' : row[j]) + '</td>';
+        }
+        if ((headers.length || row.length) > PREVIEW_MAX_COLS) bodyHtml += '<td>…</td>';
+        bodyHtml += '</tr>';
+      });
+      tbody.innerHTML = bodyHtml || '<tr><td colspan="' + Math.max(showCols, 1) + '" class="muted">Sin filas de datos</td></tr>';
+
+      document.getElementById('import-preview-wrap').style.display = 'block';
+      document.getElementById('import-actions').style.display = 'flex';
+      var scrollHint = document.getElementById('import-scroll-hint');
+      if (scrollHint) scrollHint.hidden = false;
+      var meta = document.getElementById('import-file-meta');
+      meta.style.display = 'flex';
+      meta.innerHTML = '<span><i class="fa-solid fa-file' + (kind === 'xlsx' ? '-excel' : '-csv') + '"></i> <strong>' +
+        esc(fileName) + '</strong></span><span class="muted">' + esc(kind.toUpperCase()) + ' · ' +
+        dataRows.length + ' filas · ' + (headers.length || showCols) + ' columnas</span>';
+
+      var note = document.getElementById('import-preview-note');
+      note.style.display = 'block';
+      var parts = [];
+      if (dataRows.length > PREVIEW_MAX_ROWS) parts.push('mostrando las primeras ' + PREVIEW_MAX_ROWS + ' filas');
+      if ((headers.length || 0) > PREVIEW_MAX_COLS) parts.push('primeras ' + PREVIEW_MAX_COLS + ' columnas');
+      note.textContent = parts.length
+        ? 'Vista previa (' + parts.join(', ') + '). Revisa y pulsa Importar.'
+        : 'Vista previa completa. Revisa y pulsa Importar.';
+
+      var zone = document.getElementById('import-dropzone');
+      if (zone) zone.classList.add('has-file');
+    }
+
+    function setImportPendingFromFile(file) {
+      if (!file) return;
+      var name = file.name || 'archivo';
+      var mime = String(file.type || '').toLowerCase();
+      // Inside Node template literal: /\\.xlsx?/ becomes /\.xlsx?/ in the browser
+      var isXlsx = /\\.xlsx?$/i.test(name) ||
+        mime.indexOf('spreadsheet') >= 0 ||
+        mime.indexOf('excel') >= 0 ||
+        mime === 'application/vnd.ms-excel';
+      clearImportPreview();
+      setImportStatus('Leyendo ' + name + '…', 'ok');
+
+      if (isXlsx) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var buf = reader.result;
+          loadXlsxLib().then(function (XLSX) {
+            var wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
+            var sheetName = wb.SheetNames[0];
+            var sheet = wb.Sheets[sheetName];
+            var aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+            rememberPending({
+              kind: 'xlsx',
+              name: name,
+              xlsxBase64: arrayBufferToBase64(buf),
+              rows: aoa.length ? aoa.length - 1 : 0
+            });
+            renderImportPreview(aoa, name, 'xlsx');
+            setImportStatus('Archivo listo. Pulsa Importar.', 'ok');
+          }).catch(function (e) {
+            setImportStatus(e.message || String(e), 'err');
+          });
+        };
+        reader.onerror = function () { setImportStatus('No se pudo leer el archivo', 'err'); };
+        reader.readAsArrayBuffer(file);
+        return;
+      }
+
+      var textReader = new FileReader();
+      textReader.onload = function () {
+        var text = String(textReader.result || '');
+        var aoa = parseCsvPreview(text);
+        rememberPending({ kind: 'csv', name: name, csv: text, rows: Math.max(aoa.length - 1, 0) });
+        renderImportPreview(aoa, name, 'csv');
+        setImportStatus('Archivo listo. Pulsa Importar.', 'ok');
+      };
+      textReader.onerror = function () { setImportStatus('No se pudo leer el archivo', 'err'); };
+      textReader.readAsText(file);
+    }
+
+    var dropzone = document.getElementById('import-dropzone');
+    var importFileInput = document.getElementById('import-file');
+    var pickBtn = document.getElementById('btn-pick-import');
+    if (pickBtn && importFileInput) {
+      pickBtn.onclick = function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        importFileInput.click();
+      };
+    }
+    if (dropzone && importFileInput) {
+      dropzone.addEventListener('click', function (ev) {
+        if (ev.target.closest && ev.target.closest('#btn-pick-import')) return;
+        importFileInput.click();
+      });
+      dropzone.addEventListener('dragover', function (ev) {
+        ev.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+      dropzone.addEventListener('dragleave', function () {
+        dropzone.classList.remove('dragover');
+      });
+      dropzone.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        dropzone.classList.remove('dragover');
+        var file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+        if (file) setImportPendingFromFile(file);
+      });
+      importFileInput.onchange = function () {
+        var file = importFileInput.files && importFileInput.files[0];
+        if (file) setImportPendingFromFile(file);
+      };
+    }
+
+    var clearImportBtn = document.getElementById('btn-clear-import');
+    if (clearImportBtn) {
+      clearImportBtn.onclick = function () {
+        clearImportPreview();
+        setImportStatus('Archivo quitado', 'ok');
+      };
+    }
+
+    function runImportNow() {
+      var pending = importPending || window.__syspricingImportPending || null;
+      var runBtn = document.getElementById('btn-run-import');
+      if (!pending) {
+        setImportStatus('Elige un archivo primero', 'warn');
+        return;
+      }
+      var body = pending.kind === 'xlsx'
+        ? { xlsxBase64: pending.xlsxBase64 }
+        : { csv: pending.csv };
+      if (pending.kind === 'xlsx' && !pending.xlsxBase64) {
+        setImportStatus('El Excel no se leyó bien. Vuelve a elegirlo.', 'err');
+        return;
+      }
+      if (runBtn) {
+        runBtn.disabled = true;
+        runBtn.textContent = 'Importando…';
+      }
+      setImportStatus('Importando ' + (pending.name || 'archivo') + '…', 'ok');
+      api('/import/csv', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      })
+        .then(function (res) {
+          var d = res.data || {};
+          var msg = 'Import completado: +' + (d.created || 0) + ' ~' + (d.updated || 0);
+          if (d.listsCreated && d.listsCreated.length) {
+            msg += ' · listas nuevas: ' + d.listsCreated.join(', ');
+          }
+          if (d.syncQueued) msg += ' · sync Shopify en segundo plano';
+          if (d.errors && d.errors.length) msg += ' · ' + d.errors.length + ' avisos';
+          setImportStatus(msg, d.errors && d.errors.length ? 'warn' : 'ok');
+          var el = document.getElementById('csv-result');
+          if (el) {
+            el.style.display = 'block';
+            el.textContent = JSON.stringify(d, null, 2);
+          }
+        })
+        .catch(function (e) {
+          setImportStatus(e.message || 'Error al importar', 'err');
+        })
+        .then(function () {
+          if (runBtn) {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Importar';
+          }
+        });
+    }
+
+    window.__syspricingRunImport = runImportNow;
+
+    var runImportBtn = document.getElementById('btn-run-import');
+    if (runImportBtn) {
+      runImportBtn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        runImportNow();
+      });
+    }
+
+    var collectionState = { items: [], selected: {} };
+
+    function pathPartsForCollection(c) {
+      var handle = String((c && c.handle) || '').trim();
+      if (handle && handle.indexOf('/') >= 0) {
+        return handle.split('/').map(function (p) { return p.trim(); }).filter(Boolean);
+      }
+      var title = String((c && c.title) || '').trim();
+      if (title.indexOf(' > ') >= 0) {
+        return title.split(' > ').map(function (p) { return p.trim(); }).filter(Boolean);
+      }
+      if (title.indexOf('/') >= 0) {
+        return title.split('/').map(function (p) { return p.trim(); }).filter(Boolean);
+      }
+      return [title || handle || 'Colección'];
+    }
+
+    function buildCollectionTree(items) {
+      var root = { name: 'Colecciones', folders: {}, leaves: [] };
+      (items || []).forEach(function (c) {
+        var parts = pathPartsForCollection(c);
+        if (parts.length <= 1) {
+          root.leaves.push({ collection: c, label: parts[0] || c.title });
+          return;
+        }
+        var node = root;
+        for (var i = 0; i < parts.length - 1; i++) {
+          var key = parts[i].toLowerCase();
+          if (!node.folders[key]) node.folders[key] = { name: parts[i], folders: {}, leaves: [] };
+          node = node.folders[key];
+        }
+        node.leaves.push({ collection: c, label: parts[parts.length - 1] });
+      });
+      return root;
+    }
+
+    function syncFolderCheckbox(folderEl) {
+      if (!folderEl) return;
+      var boxes = folderEl.querySelectorAll(':scope > .tree-children .tree-leaf input[type=checkbox]');
+      if (!boxes.length) return;
+      var checked = 0;
+      boxes.forEach(function (b) { if (b.checked) checked += 1; });
+      var folderBox = folderEl.querySelector(':scope > .tree-row > label > input[type=checkbox]');
+      if (!folderBox) return;
+      folderBox.checked = checked > 0 && checked === boxes.length;
+      folderBox.indeterminate = checked > 0 && checked < boxes.length;
+    }
+
+    function syncAllFolders(rootEl) {
+      var folders = rootEl.querySelectorAll('.tree-folder');
+      for (var i = folders.length - 1; i >= 0; i--) syncFolderCheckbox(folders[i]);
+    }
+
+    function updateSelectionHint() {
+      var hint = document.getElementById('collection-selection-hint');
+      if (!hint) return;
+      var ids = getSelectedCollectionIds();
+      if (!ids.length) {
+        hint.textContent = 'Sin selección = todo el catálogo. Marca una o varias colecciones para exportar solo esas.';
+      } else {
+        hint.textContent = ids.length + ' colección(es) seleccionada(s).';
+      }
+    }
+
+    function getSelectedCollectionIds() {
+      var root = document.getElementById('collection-tree');
+      if (!root) return [];
+      return Array.prototype.slice.call(root.querySelectorAll('.tree-leaf input[type=checkbox]:checked'))
+        .map(function (el) { return el.value; })
+        .filter(Boolean);
+    }
+
+    function renderCollectionTree(items, filterText) {
+      var mount = document.getElementById('collection-tree');
+      if (!mount) return;
+      var q = String(filterText || '').trim().toLowerCase();
+      var filtered = (items || []).filter(function (c) {
+        if (!q) return true;
+        var hay = ((c.title || '') + ' ' + (c.handle || '')).toLowerCase();
+        return hay.indexOf(q) >= 0;
+      });
+      if (!filtered.length) {
+        mount.innerHTML = '<p class="muted">' + (q ? 'Sin coincidencias.' : 'No hay colecciones.') + '</p>';
+        updateSelectionHint();
+        return;
+      }
+
+      var tree = buildCollectionTree(filtered);
+      var openByDefault = Boolean(q) || filtered.length <= 40;
+
+      function renderNode(node, depth) {
+        var html = '';
+        var folderKeys = Object.keys(node.folders || {}).sort(function (a, b) {
+          return node.folders[a].name.localeCompare(node.folders[b].name, 'es');
+        });
+        folderKeys.forEach(function (key) {
+          var folder = node.folders[key];
+          var open = openByDefault || depth < 1;
+          html += '<div class="tree-folder' + (open ? ' is-open' : '') + '" data-depth="' + depth + '">';
+          html += '<div class="tree-row">';
+          html += '<button type="button" class="tree-toggle" aria-label="Expandir/colapsar"><i class="fa-solid fa-caret-right"></i></button>';
+          html += '<label class="tree-label"><input type="checkbox" class="tree-folder-check" /> ';
+          html += '<span class="tree-name"><i class="fa-regular fa-folder tree-icon"></i> ' + esc(folder.name) + '</span></label>';
+          html += '</div><div class="tree-children">';
+          html += renderNode(folder, depth + 1);
+          html += '</div></div>';
+        });
+
+        var leaves = (node.leaves || []).slice().sort(function (a, b) {
+          return String(a.label || '').localeCompare(String(b.label || ''), 'es');
+        });
+        leaves.forEach(function (leaf) {
+          var c = leaf.collection;
+          var checked = collectionState.selected[c.id] ? ' checked' : '';
+          var count = c.productsCount != null ? ' <span class="tree-count">(' + esc(String(c.productsCount)) + ')</span>' : '';
+          html += '<div class="tree-leaf" data-depth="' + depth + '">';
+          html += '<div class="tree-row">';
+          html += '<span class="tree-toggle-spacer"></span>';
+          html += '<label class="tree-label"><input type="checkbox" value="' + esc(c.id) + '"' + checked + ' /> ';
+          html += '<span class="tree-name"><i class="fa-regular fa-file-lines tree-icon"></i> ' + esc(leaf.label || c.title) + count + '</span></label>';
+          html += '</div></div>';
+        });
+        return html;
+      }
+
+      var body = ''
+        + '<div class="tree-folder is-open tree-root" data-depth="0">'
+        + '<div class="tree-row">'
+        + '<button type="button" class="tree-toggle" aria-label="Expandir/colapsar"><i class="fa-solid fa-caret-right"></i></button>'
+        + '<label class="tree-label"><input type="checkbox" class="tree-folder-check" /> '
+        + '<span class="tree-name"><i class="fa-regular fa-folder-open tree-icon"></i> Colecciones</span></label>'
+        + '</div><div class="tree-children">'
+        + renderNode(tree, 1)
+        + '</div></div>';
+      mount.innerHTML = body;
+      syncAllFolders(mount);
+      updateSelectionHint();
+    }
+
+    function loadCollections() {
+      var mount = document.getElementById('collection-tree');
+      if (!mount) return Promise.resolve();
+      return api('/collections?first=250').then(function (res) {
+        collectionState.items = res.data || [];
+        var filterEl = document.getElementById('collection-filter');
+        renderCollectionTree(collectionState.items, filterEl && filterEl.value);
+      }).catch(function (e) {
+        mount.innerHTML = '<div class="alert err">' + esc(e.message) + '</div>';
+        flash('Colecciones: ' + e.message, 'err');
+      });
+    }
+
+    var treeMount = document.getElementById('collection-tree');
+    if (treeMount) {
+      treeMount.addEventListener('click', function (ev) {
+        var toggle = ev.target.closest && ev.target.closest('.tree-toggle');
+        if (toggle) {
+          ev.preventDefault();
+          var folder = toggle.closest('.tree-folder');
+          if (folder) folder.classList.toggle('is-open');
+          return;
+        }
+      });
+      treeMount.addEventListener('change', function (ev) {
+        var input = ev.target;
+        if (!input || input.type !== 'checkbox') return;
+        var folder = input.closest('.tree-folder');
+        if (input.classList.contains('tree-folder-check')) {
+          var boxes = folder
+            ? folder.querySelectorAll(':scope > .tree-children .tree-leaf input[type=checkbox]')
+            : [];
+          boxes.forEach(function (b) {
+            b.checked = input.checked;
+            if (b.value) collectionState.selected[b.value] = b.checked;
+          });
+          // also nested folder checks visual
+          if (folder) {
+            folder.querySelectorAll(':scope > .tree-children .tree-folder-check').forEach(function (b) {
+              b.checked = input.checked;
+              b.indeterminate = false;
+            });
+          }
+        } else if (input.value) {
+          collectionState.selected[input.value] = input.checked;
+        }
+        syncAllFolders(treeMount);
+        updateSelectionHint();
+      });
+    }
+
+    var filterInput = document.getElementById('collection-filter');
+    if (filterInput) {
+      filterInput.addEventListener('input', function () {
+        renderCollectionTree(collectionState.items, filterInput.value);
+      });
+    }
+
+    var expandBtn = document.getElementById('btn-expand-collections');
+    if (expandBtn) {
+      expandBtn.onclick = function () {
+        document.querySelectorAll('#collection-tree .tree-folder').forEach(function (el) {
+          el.classList.add('is-open');
+        });
+      };
+    }
+    var collapseBtn = document.getElementById('btn-collapse-collections');
+    if (collapseBtn) {
+      collapseBtn.onclick = function () {
+        document.querySelectorAll('#collection-tree .tree-folder').forEach(function (el) {
+          if (!el.classList.contains('tree-root')) el.classList.remove('is-open');
+        });
+      };
+    }
+
+    var refreshCollectionsBtn = document.getElementById('btn-refresh-collections');
+    if (refreshCollectionsBtn) {
+      refreshCollectionsBtn.onclick = function () {
+        refreshCollectionsBtn.disabled = true;
+        loadCollections().then(function () {
+          refreshCollectionsBtn.disabled = false;
+        });
+      };
+    }
+    loadCollections();
+
     var exportBtn = document.getElementById('btn-export-csv');
     if (exportBtn) {
       exportBtn.onclick = function () {
+        var collectionIds = getSelectedCollectionIds();
+        var body = collectionIds.length
+          ? { collectionIds: collectionIds, format: 'xlsx' }
+          : { all: true, format: 'xlsx' };
         exportBtn.disabled = true;
         api('/export/csv', {
           method: 'POST',
-          body: JSON.stringify({ all: true, format: 'xlsx' })
+          body: JSON.stringify(body)
         }).then(function (res) {
           var meta = (res.data && res.data.meta) || {};
           downloadBase64(
@@ -453,40 +1004,12 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
             meta.filename || 'syspricing-individual-pricing.xlsx',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
           );
-          flash('Export: ' + (meta.variants || 0) + ' variantes, ' + (meta.prices || 0) + ' precios', 'ok');
+          var scope = meta.collection && meta.collection.title
+            ? meta.collection.title
+            : 'catálogo';
+          flash('Export (' + scope + '): ' + (meta.variants || 0) + ' variantes, ' + (meta.prices || 0) + ' precios', 'ok');
         }).catch(function (e) { flash(e.message, 'err'); })
           .then(function () { exportBtn.disabled = false; });
-      };
-    }
-
-    var fileInput = document.getElementById('csv-file');
-    if (fileInput) {
-      fileInput.onchange = function () {
-        var file = fileInput.files && fileInput.files[0];
-        if (!file) return;
-        var reader = new FileReader();
-        reader.onload = function () {
-          var result = String(reader.result || '');
-          var isXlsx = /\\.xlsx?$/i.test(file.name) || result.indexOf('data:application') === 0;
-          var body;
-          if (isXlsx) {
-            var b64 = result.indexOf('base64,') >= 0 ? result.split('base64,')[1] : result;
-            body = { xlsxBase64: b64 };
-          } else {
-            body = { csv: result };
-          }
-          api('/import/csv', { method: 'POST', body: JSON.stringify(body) })
-            .then(function (res) {
-              flash('Import completado (' + ((res.data && res.data.format) || 'ok') + ')', 'ok');
-              var el = document.getElementById('csv-result');
-              el.style.display = 'block';
-              el.textContent = JSON.stringify(res.data, null, 2);
-            })
-            .catch(function (e) { flash(e.message, 'err'); });
-        };
-        if (/\\.xlsx?$/i.test(file.name)) reader.readAsDataURL(file);
-        else reader.readAsText(file);
-        fileInput.value = '';
       };
     }
   }
@@ -564,6 +1087,7 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .tab.active { background:var(--surface); color:var(--accent); box-shadow:inset 0 -2px 0 var(--accent); }
     .panel { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.2rem; }
     h2 { margin:0 0 0.35rem; font-size:1.15rem; }
+    .section-title { margin:1.1rem 0 0.55rem; font-size:1rem; font-weight:700; }
     .muted { color:var(--muted); }
     .card { border:1px solid var(--border); border-radius:8px; padding:1rem; margin-top:0.85rem; background:#fafbfb; }
     .grid-3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:0.75rem; }
@@ -573,8 +1097,11 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .alert.ok { background:var(--ok-bg); border-color:var(--ok-bd); }
     .alert.err { background:var(--err-bg); border-color:var(--err-bd); }
     .form-row { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin:0.85rem 0; }
-    .form-row input, .form-row select, textarea { font:inherit; padding:0.5rem 0.65rem; border:1px solid var(--border); border-radius:6px; }
-    .form-row button, button[type=submit] { background:var(--accent); color:#fff; border:none; border-radius:6px; font-weight:600; padding:0.5rem 0.9rem; cursor:pointer; }
+    .form-row input, .form-row select, textarea { font:inherit; padding:0.5rem 0.65rem; border:1px solid var(--border); border-radius:6px; min-height:2.5rem; }
+    .form-row button, button[type=submit] { background:var(--accent); color:#fff; border:none; border-radius:6px; font-weight:600; padding:0.5rem 0.9rem; cursor:pointer; min-height:2.5rem; }
+    .input-grow { flex:1 1 12rem; min-width:0; width:auto; }
+    .input-sm { flex:0 0 auto; width:5rem; max-width:5rem; }
+    .drop-mobile { display:none; }
     button.btn-secondary,
     .btn-secondary {
       display:inline-flex;
@@ -599,13 +1126,112 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .btn-secondary:hover { filter:brightness(0.94); }
     .btn-sm { padding:0.25rem 0.55rem; font-size:0.8rem; }
     .btn-danger { display:inline-flex; align-items:center; background:#d72c0d; color:#fff; border:none; border-radius:6px; font-weight:600; padding:0.5rem 0.9rem; cursor:pointer; }
-    .table-wrap { overflow:auto; margin-top:0.75rem; max-width:100%; }
+    .collection-tree {
+      border:1px solid var(--border);
+      border-radius:8px;
+      background:#fafbfb;
+      max-height:22rem;
+      overflow:auto;
+      padding:0.45rem 0.35rem;
+      font-size:0.92rem;
+    }
+    .collection-tree .tree-row {
+      display:flex;
+      align-items:center;
+      gap:0.25rem;
+      padding:0.18rem 0.35rem;
+      border-radius:6px;
+      min-height:1.7rem;
+    }
+    .collection-tree .tree-row:hover { background:#eef2f4; }
+    .collection-tree .tree-label {
+      display:inline-flex;
+      align-items:center;
+      gap:0.4rem;
+      cursor:pointer;
+      flex:1;
+      min-width:0;
+      margin:0;
+      font-weight:500;
+    }
+    .collection-tree .tree-name {
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .collection-tree .tree-count { color:var(--muted); font-weight:500; }
+    .collection-tree .tree-icon { color:#6d7175; width:1rem; text-align:center; }
+    .collection-tree .tree-toggle {
+      width:1.35rem;
+      height:1.35rem;
+      border:none;
+      background:transparent;
+      color:#5c5f62;
+      cursor:pointer;
+      border-radius:4px;
+      padding:0;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
+    }
+    .collection-tree .tree-toggle:hover { background:#e4e7ea; }
+    .collection-tree .tree-toggle i {
+      transition: transform 0.12s ease;
+      font-size:0.75rem;
+    }
+    .collection-tree .tree-folder.is-open > .tree-row .tree-toggle i {
+      transform: rotate(90deg);
+    }
+    .collection-tree .tree-folder:not(.is-open) > .tree-children { display:none; }
+    .collection-tree .tree-children { margin-left:1.1rem; border-left:1px solid #e1e3e5; padding-left:0.15rem; }
+    .collection-tree .tree-toggle-spacer { width:1.35rem; flex:0 0 auto; }
+    .collection-tree input[type=checkbox] { width:1rem; height:1rem; accent-color:var(--accent); cursor:pointer; }
+    .import-dropzone {
+      border:1.5px dashed #c9ccd0;
+      border-radius:10px;
+      background:#fafbfb;
+      padding:1.25rem 1rem;
+      text-align:center;
+      cursor:pointer;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .import-dropzone:hover, .import-dropzone.dragover {
+      border-color:var(--accent);
+      background:#f1faf6;
+    }
+    .import-dropzone.has-file { border-style:solid; border-color:#aee0bf; }
+    .import-dropzone-inner i { font-size:1.6rem; color:var(--accent); margin-bottom:0.35rem; }
+    .import-dropzone-inner p { margin:0.2rem 0; }
+    .import-dropzone .linkish {
+      background:none; border:none; color:var(--accent); font:inherit; font-weight:700;
+      text-decoration:underline; cursor:pointer; padding:0;
+    }
+    .import-file-meta {
+      display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;
+      margin:0.65rem 0 0.35rem; font-size:0.92rem;
+    }
+    .import-file-meta i { color:var(--accent); margin-right:0.25rem; }
+    .import-preview-wrap {
+      border:1px solid var(--border); border-radius:8px; background:#fff;
+      max-height:18rem; margin-top:0.35rem;
+    }
+    .import-preview-table { min-width:640px; font-size:0.84rem; }
+    .import-preview-table th {
+      position:sticky; top:0; background:#f3f4f5; z-index:1;
+      white-space:nowrap; max-width:10rem; overflow:hidden; text-overflow:ellipsis;
+    }
+    .import-preview-table td {
+      white-space:nowrap; max-width:10rem; overflow:hidden; text-overflow:ellipsis;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.8rem;
+    }
+    .table-wrap { overflow:auto; margin-top:0.75rem; max-width:100%; -webkit-overflow-scrolling:touch; overscroll-behavior-x:contain; }
     table { width:100%; border-collapse:collapse; font-size:0.92rem; }
     th, td { text-align:left; padding:0.55rem 0.45rem; border-bottom:1px solid var(--border); vertical-align:top; }
     th { color:var(--muted); font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em; }
     .matrix-table { min-width:720px; }
     .matrix-table .sticky { position:sticky; left:0; background:#fafbfb; z-index:1; min-width:14rem; }
-    .price-cell { width:5.5rem; font:inherit; padding:0.35rem 0.45rem; border:1px solid var(--border); border-radius:6px; }
+    .price-cell { width:5.5rem; max-width:100%; font:inherit; padding:0.35rem 0.45rem; border:1px solid var(--border); border-radius:6px; min-height:2.35rem; }
     .pct { font-size:0.75rem; margin-top:0.2rem; }
     .main-footer { max-width:1200px; margin:2.5rem auto 0; padding:0 1.25rem 2rem; }
     .main-footer .footer-inner { text-align:center; border-top:1px solid var(--border); padding-top:1.5rem; }
@@ -626,7 +1252,6 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .stat-label { font-size:0.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; font-weight:600; }
     .stat-value { font-size:1.55rem; font-weight:800; color:var(--text); line-height:1.1; }
     .home-grid { display:grid; grid-template-columns:1.15fr 1fr; gap:0.85rem; }
-    @media (max-width:860px) { .home-grid { grid-template-columns:1fr; } }
     .home-section { border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; background:#fafbfb; }
     .home-section h3 { margin:0 0 0.65rem; font-size:1rem; display:flex; align-items:center; gap:0.45rem; }
     .home-section h3 i { color:var(--accent); }
@@ -656,6 +1281,78 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     .section-head { display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.5rem; }
     .section-head h3 { margin:0; }
     .activity-mini td { font-size:0.85rem; }
+    .scroll-hint { display:none; margin:0.35rem 0 0; font-size:0.78rem; color:var(--muted); }
+    @media (max-width:860px) {
+      .main-header { padding:0.85rem 0; }
+      .main-header .container, .shell, .main-footer { padding-left:0.85rem; padding-right:0.85rem; }
+      .main-header .row { gap:0.75rem; }
+      .main-header .col-title { flex:1 1 100%; order:2; }
+      .main-header .col-shop { margin-left:0; order:3; width:100%; }
+      .main-header .col-logo { order:1; }
+      .main-header h1 { font-size:1.15rem; }
+      .header-logo { height:40px; max-width:130px; }
+      .shop-badge { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .shell { padding-top:0.85rem; padding-bottom:1.5rem; }
+      .tabs {
+        flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
+        gap:0.25rem; margin-left:-0.85rem; margin-right:-0.85rem;
+        padding:0 0.85rem 0.45rem; scrollbar-width:thin;
+      }
+      .tab { flex:0 0 auto; white-space:nowrap; font-size:0.88rem; padding:0.6rem 0.75rem; }
+      .panel { padding:0.9rem 0.85rem; border-radius:8px; }
+      .home-grid { grid-template-columns:1fr; }
+      .home-ready { min-width:0; width:100%; }
+      .home-hero { gap:0.85rem; }
+      .stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .form-row input, .form-row select, .form-row button, .form-row .btn-secondary, .form-row .btn-ghost,
+      .form-row button[type=submit] { flex:1 1 auto; }
+      .input-grow { flex:1 1 100%; width:100%; }
+      .input-sm { flex:1 1 5rem; width:auto; max-width:none; }
+      .export-toolbar .btn-ghost, .export-toolbar .btn-secondary { flex:1 1 calc(50% - 0.5rem); }
+      .export-toolbar .btn-secondary { flex:1 1 100%; }
+      .matrix-table { min-width:560px; }
+      .matrix-table .sticky { min-width:9.5rem; max-width:11rem; }
+      .import-preview-table { min-width:480px; }
+      .collection-tree { max-height:16rem; }
+      .scroll-hint { display:block; }
+      .scroll-hint[hidden] { display:none !important; }
+      .drop-desktop { display:none; }
+      .drop-mobile { display:inline; }
+      .home-actions .btn-secondary, .home-actions .btn-ghost { flex:1 1 auto; justify-content:center; }
+      .main-footer { margin-top:1.5rem; padding-bottom:1.25rem; }
+    }
+    @media (max-width:560px) {
+      .main-header h1 { font-size:1.05rem; }
+      .main-header .subtitle { font-size:0.82rem; }
+      .header-logo { height:34px; max-width:110px; }
+      .stat-value { font-size:1.25rem; }
+      .stat-grid { gap:0.5rem; }
+      .stat-card { padding:0.7rem 0.75rem; }
+      .home-section { padding:0.85rem; }
+      .flow-grid { grid-template-columns:1fr 1fr; }
+      .matrix-table { min-width:480px; font-size:0.84rem; }
+      .matrix-table .sticky { min-width:8rem; }
+      .price-cell { width:4.75rem; padding:0.3rem 0.35rem; }
+      .import-dropzone { padding:1rem 0.75rem; }
+      .import-preview-wrap { max-height:14rem; }
+      .form-row > button,
+      .form-row > .btn-secondary,
+      .form-row > .btn-ghost,
+      .home-actions > .btn-secondary,
+      .home-actions > .btn-ghost,
+      .export-toolbar > .btn-ghost,
+      .export-toolbar > .btn-secondary { width:100%; }
+      .export-toolbar .btn-ghost, .export-toolbar .btn-secondary { flex:1 1 100%; }
+      .footer-logo { height:32px; max-width:110px; }
+    }
+    @media (hover:none) and (pointer:coarse) {
+      .tab, .btn-secondary, .btn-ghost, .btn-danger, button[type=submit], .form-row button, .linkish, .tree-toggle {
+        min-height:2.75rem;
+      }
+      .collection-tree .tree-row { min-height:2.4rem; }
+      .collection-tree input[type=checkbox] { width:1.15rem; height:1.15rem; }
+      .price-cell { min-height:2.6rem; font-size:1rem; }
+    }
   </style>
 </head>
 <body>

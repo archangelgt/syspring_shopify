@@ -1,6 +1,6 @@
 /**
  * SYSPRICING storefront — App Proxy + Liquid tags fallback
- * (New Customer Accounts often omit logged_in_customer_id on proxy).
+ * Catalog price stays visible; B2B block only appears when a special price exists.
  */
 (function () {
   function boot(root) {
@@ -12,32 +12,36 @@
     var tagEl = root.querySelector('.syspricing-tag');
     var statusEl = root.querySelector('.syspricing-status');
 
-    function setStatus(msg, isError) {
+    function clearStatus() {
       if (!statusEl) return;
-      statusEl.textContent = msg || '';
-      statusEl.style.display = msg ? 'block' : 'none';
-      statusEl.style.color = isError ? '#d72c0d' : '#6d7175';
+      statusEl.textContent = '';
+      statusEl.style.display = 'none';
+    }
+
+    function hideB2b() {
+      clearStatus();
+      if (amountEl) amountEl.textContent = '';
+      if (tagEl) tagEl.textContent = '';
+      root.setAttribute('hidden', '');
+      root.hidden = true;
     }
 
     function applyPrice(info) {
       if (!info || !info.price) {
-        setStatus('Sin precio B2B para tus tags en esta variante (cárgalo en Variant Pricing)', true);
-        console.warn('[SYSPRICING] No B2B price', info);
+        hideB2b();
         return;
       }
       var formatted = 'Q' + Number(info.price).toFixed(2);
       if (amountEl) amountEl.textContent = formatted;
-      if (tagEl && info.matchedTag) tagEl.textContent = '(' + info.matchedTag + ')';
-      setStatus('');
+      if (tagEl) tagEl.textContent = info.matchedTag ? '(' + info.matchedTag + ')' : '';
+      clearStatus();
+      root.removeAttribute('hidden');
       root.hidden = false;
-
-      var priceNode = root.parentElement && root.parentElement.querySelector('.price');
-      if (priceNode) priceNode.textContent = formatted;
     }
 
     function loadForVariant(variantId) {
       if (!variantId) return;
-      setStatus('Cargando precio…', false);
+      clearStatus();
       var params = new URLSearchParams();
       params.set('variant_ids', String(variantId));
       if (tags) params.set('tags', tags);
@@ -46,21 +50,19 @@
 
       fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
         .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status + ' — revisa App Proxy');
+          if (!r.ok) throw new Error('proxy');
           return r.json();
         })
         .then(function (body) {
-          console.info('[SYSPRICING]', body);
           if (body && body.error) {
-            setStatus(body.error.message || 'Error proxy', true);
+            hideB2b();
             return;
           }
           var prices = (body && body.data && body.data.prices) || {};
           applyPrice(prices[String(variantId)] || null);
         })
-        .catch(function (err) {
-          console.error('[SYSPRICING]', err);
-          setStatus((err && err.message) || 'Error al cargar precio', true);
+        .catch(function () {
+          hideB2b();
         });
     }
 

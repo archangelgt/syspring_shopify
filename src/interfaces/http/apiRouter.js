@@ -75,6 +75,21 @@ function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafiel
     }
   });
 
+  router.get('/collections', async (req, res, next) => {
+    try {
+      if (!useCases.products?.collections) {
+        throw new DomainError('Collections not available', 'NO_COLLECTIONS', 503);
+      }
+      const data = await useCases.products.collections(req.shop, {
+        query: req.query.q || req.query.query || '',
+        first: req.query.first,
+      });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get('/products', async (req, res, next) => {
     try {
       const data = await useCases.products.search(req.shop, {
@@ -118,14 +133,32 @@ function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafiel
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean);
-      const all =
-        Boolean(req.body?.all || req.query.all === '1') || productIds.length === 0;
+      const collectionIds = Array.isArray(req.body?.collectionIds)
+        ? req.body.collectionIds.map(String).filter(Boolean)
+        : String(req.body?.collectionIds || req.query.collectionIds || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      const collectionId = String(
+        req.body?.collectionId || req.query.collectionId || ''
+      ).trim();
+      const collectionHandle = String(
+        req.body?.collectionHandle || req.query.collectionHandle || ''
+      ).trim();
+      if (collectionId) collectionIds.push(collectionId);
+      const uniqueCollectionIds = [...new Set(collectionIds)];
+      const hasCollection = uniqueCollectionIds.length > 0 || Boolean(collectionHandle);
+      const all = hasCollection
+        ? false
+        : Boolean(req.body?.all || req.query.all === '1') || productIds.length === 0;
       const format =
         String(req.body?.format || req.query.format || 'xlsx').toLowerCase() === 'csv'
           ? 'csv'
           : 'xlsx';
       const data = await useCases.exportCsv.run(req.shop, {
         productIds,
+        collectionIds: uniqueCollectionIds,
+        collectionHandle,
         all,
         format,
       });

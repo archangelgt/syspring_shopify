@@ -2,7 +2,7 @@
 # Bootstrap carpeta de deploy SomosFace en el servidor (ejecutar en el host).
 set -euo pipefail
 
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/erpsys/syspricing-somosface}"
+DEPLOY_DIR="${DEPLOY_DIR:-/var/www/erpsys-v1-docker/docker/syspricing_somosface}"
 REPO_URL="${REPO_URL:-https://github.com/archangelgt/syspring_shopify.git}"
 BRANCH="${BRANCH:-deploy/somosface}"
 

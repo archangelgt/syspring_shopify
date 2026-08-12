@@ -6,6 +6,8 @@
   border-radius: 8px;
   font-size: 1.05rem;
   font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
 }
 .syspricing-b2b-price .syspricing-amount {
   margin-left: 0.35rem;
@@ -25,4 +27,15 @@
 }
 .syspricing-b2b-price[hidden] {
   display: none !important;
+}
+@media (max-width: 560px) {
+  .syspricing-b2b-price {
+    font-size: 1rem;
+    padding: 0.6rem 0.75rem;
+  }
+  .syspricing-b2b-price .syspricing-tag {
+    display: inline-block;
+    margin-left: 0;
+    margin-top: 0.2rem;
+  }
 }

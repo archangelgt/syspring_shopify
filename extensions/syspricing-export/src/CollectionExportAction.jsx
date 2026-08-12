@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 
 export default async () => {
-  render(<ExportExtension />, document.body);
+  render(<CollectionExportExtension />, document.body);
 };
 
 function numericId(gid) {
@@ -18,22 +18,49 @@ function buildCsv(rows) {
   return rows.map((cols) => cols.map(escapeCsv).join(',')).join('\n');
 }
 
-async function fetchProducts(ids) {
+async function graphql(query, variables) {
+  if (typeof shopify.query === 'function') {
+    const result = await shopify.query(query, { variables });
+    if (result?.errors?.length) {
+      throw new Error(result.errors[0].message || 'GraphQL error');
+    }
+    return result?.data;
+  }
+
+  const response = await fetch('shopify:admin/api/2025-10/graphql.json', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+  });
+  const json = await response.json();
+  if (json.errors?.length) {
+    throw new Error(json.errors[0].message || 'GraphQL error');
+  }
+  return json.data;
+}
+
+async function fetchCollectionProducts(collectionId, maxProducts = 2500) {
   const query = `#graphql
-    query SyspricingExportProducts($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on Product {
-          id
-          title
-          variants(first: 100) {
-            nodes {
-              id
-              title
-              displayName
-              sku
-              price
-              metafield(namespace: "syspricing", key: "prices") {
-                value
+    query SyspricingCollectionExport($id: ID!, $first: Int!, $after: String) {
+      collection(id: $id) {
+        id
+        title
+        handle
+        products(first: $first, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            title
+            variants(first: 100) {
+              nodes {
+                id
+                title
+                displayName
+                sku
+                price
+                metafield(namespace: "syspricing", key: "prices") {
+                  value
+                }
               }
             }
           }
@@ -42,21 +69,30 @@ async function fetchProducts(ids) {
     }
   `;
 
-  if (typeof shopify.query === 'function') {
-    const result = await shopify.query(query, { variables: { ids } });
-    return result?.data?.nodes || [];
+  const products = [];
+  let cursor = null;
+  let meta = null;
+  let guard = 0;
+
+  while (products.length < maxProducts && guard < 100) {
+    guard += 1;
+    const data = await graphql(query, {
+      id: collectionId,
+      first: 50,
+      after: cursor,
+    });
+    const coll = data?.collection;
+    if (!coll) throw new Error('Collection not found');
+    if (!meta) meta = { id: coll.id, title: coll.title, handle: coll.handle };
+    for (const product of coll.products?.nodes || []) {
+      products.push(product);
+      if (products.length >= maxProducts) break;
+    }
+    if (!coll.products?.pageInfo?.hasNextPage) break;
+    cursor = coll.products.pageInfo.endCursor;
   }
 
-  const response = await fetch('shopify:admin/api/2025-10/graphql.json', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query, variables: { ids } }),
-  });
-  const json = await response.json();
-  if (json.errors?.length) {
-    throw new Error(json.errors[0].message || 'GraphQL error');
-  }
-  return json.data?.nodes || [];
+  return { meta, products };
 }
 
 function buildMatrix(nodes) {
@@ -107,33 +143,32 @@ function buildMatrix(nodes) {
   return { rows, priceCount, variantCount: variants.length };
 }
 
-function ExportExtension() {
+function CollectionExportExtension() {
   const { close, data, i18n } = shopify;
   const selected = data?.selected || [];
+  const collectionId = useMemo(() => selected[0]?.id || '', [selected]);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState('');
   const [csv, setCsv] = useState('');
   const [count, setCount] = useState(0);
+  const [productCount, setProductCount] = useState(0);
+  const [title, setTitle] = useState('');
   const [copied, setCopied] = useState(false);
-
-  const productIds = useMemo(
-    () => selected.map((item) => item.id).filter(Boolean).slice(0, 100),
-    [selected]
-  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        if (!productIds.length) {
+        if (!collectionId) {
           setStatus('empty');
-          setCount(0);
           setCsv('product_id,variant_id,variant_name,sku,original_price');
           return;
         }
-        const nodes = await fetchProducts(productIds);
-        const { rows, priceCount, variantCount } = buildMatrix(nodes);
+        const { meta, products } = await fetchCollectionProducts(collectionId);
+        const { rows, priceCount, variantCount } = buildMatrix(products);
         if (cancelled) return;
+        setTitle(meta?.title || '');
+        setProductCount(products.length);
         setCsv(buildCsv(rows));
         setCount(priceCount);
         setStatus(variantCount ? (priceCount ? 'ready' : 'empty') : 'empty');
@@ -146,7 +181,7 @@ function ExportExtension() {
     return () => {
       cancelled = true;
     };
-  }, [productIds]);
+  }, [collectionId]);
 
   async function onCopy() {
     try {
@@ -159,16 +194,20 @@ function ExportExtension() {
   }
 
   function onDownload() {
+    const slug = String(title || 'collection')
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'collection';
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `syspricing-individual-pricing-${Date.now()}.csv`;
+    a.download = `syspricing-individual-pricing-${slug}-${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  const heading = i18n.translate('title');
   const body =
     status === 'loading'
       ? i18n.translate('loading')
@@ -179,11 +218,11 @@ function ExportExtension() {
           : i18n.translate('ready', { count: String(count) });
 
   return (
-    <s-admin-action heading={heading}>
+    <s-admin-action heading={i18n.translate('collectionTitle')}>
       <s-stack direction="block" gap="base">
-        <s-text>{i18n.translate('description')}</s-text>
+        <s-text>{i18n.translate('collectionDescription')}</s-text>
         <s-text>
-          {selected.length} product(s) · {body}
+          {title || i18n.translate('collectionFallback')} · {productCount} product(s) · {body}
         </s-text>
         {status === 'ready' || status === 'empty' ? (
           <s-box padding="base" border="base" borderRadius="base">

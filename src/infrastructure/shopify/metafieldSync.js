@@ -14,6 +14,28 @@ function createMetafieldSync({
     const list = priceListRepo.getById(shop, priceListId);
     if (!list || list.status !== 'active') return { synced: 0, skipped: true };
 
+    const prices = variantPriceRepo.listByPriceList(priceListId);
+    const variantIds = prices
+      .map((vp) => vp.shopifyVariantId)
+      .filter((id) => id && !String(id).startsWith('sku:'));
+
+    return syncVariantIds(shop, variantIds);
+  }
+
+  /**
+   * Build full tag→price maps from SQLite (all active lists) and batch-write metafields.
+   * No per-variant Shopify read — safe after bulk import.
+   */
+  async function syncVariantIds(shop, variantIds) {
+    const ids = [
+      ...new Set(
+        (variantIds || [])
+          .map((id) => String(id || '').trim())
+          .filter((id) => id && !id.startsWith('sku:'))
+      ),
+    ];
+    if (!ids.length) return { synced: 0, skipped: true };
+
     const client = await getAdminClient(shop);
     if (!client) {
       console.warn(`[metafieldSync] no admin client for ${shop}`);
@@ -26,16 +48,59 @@ function createMetafieldSync({
       });
     }
 
-    const prices = variantPriceRepo.listByPriceList(priceListId);
-    let synced = 0;
+    const lists = priceListRepo.list(shop).filter((pl) => pl.status === 'active');
+    const listById = new Map(lists.map((pl) => [pl.id, pl]));
 
-    for (const vp of prices) {
-      if (!vp.shopifyVariantId || vp.shopifyVariantId.startsWith('sku:')) continue;
+    const lookupKeys = [];
+    for (const id of ids) {
+      lookupKeys.push(id);
+      if (id.startsWith('gid://')) {
+        const numeric = id.split('/').pop();
+        if (numeric) lookupKeys.push(numeric);
+      } else {
+        lookupKeys.push(`gid://shopify/ProductVariant/${id}`);
+      }
+    }
+
+    const rows = variantPriceRepo.listByVariantIds(shop, [...new Set(lookupKeys)]);
+    const byGid = new Map();
+
+    for (const vp of rows) {
+      const pl = listById.get(vp.priceListId);
+      if (!pl || !pl.tag) continue;
       const gid = toVariantGid(vp.shopifyVariantId);
-      const existing = await readVariantPricesMetafield(client, gid);
-      const next = { ...(existing || {}), [list.tag]: vp.price };
-      await setVariantPricesMetafield(client, gid, next);
-      synced += 1;
+      if (!byGid.has(gid)) byGid.set(gid, {});
+      byGid.get(gid)[pl.tag] = Number(vp.price);
+    }
+
+    // Only write variants we were asked to sync (avoid rewriting unrelated rows).
+    const wanted = new Set(ids.map(toVariantGid));
+    const entries = [...byGid.entries()].filter(([gid]) => wanted.has(gid));
+
+    let synced = 0;
+    const chunkSize = 25;
+    for (let i = 0; i < entries.length; i += chunkSize) {
+      const chunk = entries.slice(i, i + chunkSize);
+      await client.request(
+        `#graphql
+        mutation SetVariantPrices($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            userErrors { field message }
+          }
+        }`,
+        {
+          variables: {
+            metafields: chunk.map(([ownerId, pricesMap]) => ({
+              ownerId,
+              namespace: 'syspricing',
+              key: 'prices',
+              type: 'json',
+              value: JSON.stringify(pricesMap),
+            })),
+          },
+        }
+      );
+      synced += chunk.length;
     }
 
     await syncFunctionConfig(shop, client).catch((err) => {
@@ -54,7 +119,6 @@ function createMetafieldSync({
     lists.forEach((pl) => {
       priority[pl.tag] = pl.priority;
     });
-    // Shop-level metafield — merchant copies into discount function-config when deploying Function
     const shopId = await getShopGid(admin);
     if (!shopId) return { ok: false };
     await admin.request(
@@ -81,61 +145,13 @@ function createMetafieldSync({
     return { ok: true, tags };
   }
 
-  return { syncPriceList, syncFunctionConfig };
+  return { syncPriceList, syncVariantIds, syncFunctionConfig };
 }
 
 function toVariantGid(id) {
   const s = String(id);
   if (s.startsWith('gid://')) return s;
   return `gid://shopify/ProductVariant/${s}`;
-}
-
-async function readVariantPricesMetafield(client, ownerId) {
-  const data = await client.request(
-    `#graphql
-    query VariantPrices($id: ID!) {
-      productVariant(id: $id) {
-        metafield(namespace: "syspricing", key: "prices") { value }
-      }
-    }`,
-    { variables: { id: ownerId } }
-  );
-  const raw = data?.data?.productVariant?.metafield?.value;
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-async function setVariantPricesMetafield(client, ownerId, pricesMap) {
-  await client.request(
-    `#graphql
-    mutation SetVariantPrices($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        userErrors { field message }
-      }
-    }`,
-    {
-      variables: {
-        metafields: [
-          {
-            ownerId,
-            namespace: 'syspricing',
-            key: 'prices',
-            type: 'json',
-            value: JSON.stringify(pricesMap),
-          },
-        ],
-      },
-    }
-  );
-}
-
-async function getShopGid(client) {
-  const data = await client.request(`#graphql { shop { id } }`);
-  return data?.data?.shop?.id || null;
 }
 
 module.exports = { createMetafieldSync, toVariantGid };

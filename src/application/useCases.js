@@ -108,7 +108,7 @@ function createUseCases({
       if (!pl) throw new NotFoundError('Price list not found');
       return variantPriceRepo.listByPriceList(priceListId);
     },
-    async upsertMany(shop, priceListId, rows, actor = 'admin') {
+    async upsertMany(shop, priceListId, rows, actor = 'admin', { syncMetafields = true } = {}) {
       const pl = priceListRepo.getById(shop, priceListId);
       if (!pl) throw new NotFoundError('Price list not found');
       const results = { created: 0, updated: 0, errors: [] };
@@ -147,7 +147,7 @@ function createUseCases({
         { created: results.created, updated: results.updated, errorCount: results.errors.length },
         actor
       );
-      if (pl.status === 'active' && metafieldSync) {
+      if (syncMetafields && pl.status === 'active' && metafieldSync) {
         await metafieldSync.syncPriceList(shop, priceListId).catch((err) => {
           console.warn('[metafieldSync]', err && err.message);
         });
@@ -291,6 +291,7 @@ function createUseCases({
       }
 
       const byList = new Map();
+      const touchedVariants = new Set();
       mapped.forEach((row, i) => {
         if (row._error) {
           results.errors.push({ row: i + 1, message: row._error, data: row });
@@ -298,13 +299,34 @@ function createUseCases({
         }
         if (!byList.has(row._priceListId)) byList.set(row._priceListId, []);
         byList.get(row._priceListId).push(row);
+        if (row.shopifyVariantId) touchedVariants.add(String(row.shopifyVariantId));
       });
 
+      // Persist first; metafield sync runs in background (bulk import would otherwise hang).
       for (const [listId, listRows] of byList) {
-        const part = await prices.upsertMany(shop, listId, listRows, actor);
+        const part = await prices.upsertMany(shop, listId, listRows, actor, {
+          syncMetafields: false,
+        });
         results.created += part.created;
         results.updated += part.updated;
         results.errors.push(...part.errors);
+      }
+
+      results.syncQueued = false;
+      if (metafieldSync && touchedVariants.size) {
+        results.syncQueued = true;
+        const variantIds = [...touchedVariants];
+        setImmediate(() => {
+          const sync =
+            typeof metafieldSync.syncVariantIds === 'function'
+              ? metafieldSync.syncVariantIds(shop, variantIds)
+              : Promise.all(
+                  [...byList.keys()].map((listId) => metafieldSync.syncPriceList(shop, listId))
+                );
+          Promise.resolve(sync).catch((err) => {
+            console.warn('[metafieldSync] import background', err && err.message);
+          });
+        });
       }
 
       await log(shop, 'csv.import', 'PriceList', priceListId || tag || null, results, actor);
@@ -378,10 +400,19 @@ function createUseCases({
           ...p,
           variants: p.variants.map((v) => ({
             ...v,
-            tagPrices: byVariant[v.id] || {},
+            tagPrices:
+              byVariant[v.id] ||
+              byVariant[String(v.id).replace(/^gid:\/\/shopify\/ProductVariant\//, '')] ||
+              {},
           })),
         })),
       };
+    },
+    async collections(shop, { query, first } = {}) {
+      if (!productsAdmin?.listCollections) {
+        throw new DomainError('Collections not configured', 'NO_CLIENT', 503);
+      }
+      return productsAdmin.listCollections(shop, { query, first });
     },
   };
 
@@ -428,16 +459,64 @@ function createUseCases({
   const exportCsv = {
     async run(
       shop,
-      { productIds = [], all = false, format = 'xlsx' } = {},
+      {
+        productIds = [],
+        collectionId = '',
+        collectionIds = [],
+        collectionHandle = '',
+        all = false,
+        format = 'xlsx',
+      } = {},
       actor = 'admin'
     ) {
       if (!productsAdmin) throw new DomainError('Products admin not configured', 'NO_CLIENT', 503);
 
       let products;
-      if (all || !productIds || !productIds.length) {
-        products = await productsAdmin.listAll(shop);
+      let collectionMeta = null;
+      const ids = (productIds || []).map(String).filter(Boolean);
+      const collIds = [
+        ...new Set(
+          [...(collectionIds || []), collectionId]
+            .map((x) => String(x || '').trim())
+            .filter(Boolean)
+        ),
+      ];
+      const hasCollection = collIds.length > 0 || Boolean(collectionHandle);
+
+      if (hasCollection) {
+        const byProduct = new Map();
+        const metas = [];
+        const targets =
+          collIds.length > 0
+            ? collIds.map((id) => ({ collectionId: id, handle: '' }))
+            : [{ collectionId: '', handle: collectionHandle }];
+
+        for (const target of targets) {
+          const result = await productsAdmin.listByCollection(shop, {
+            collectionId: target.collectionId,
+            handle: target.handle,
+          });
+          if (result.collection) metas.push(result.collection);
+          for (const p of result.products || []) {
+            if (p?.id) byProduct.set(p.id, p);
+          }
+        }
+
+        products = [...byProduct.values()];
+        if (metas.length === 1) {
+          collectionMeta = metas[0];
+        } else if (metas.length > 1) {
+          collectionMeta = {
+            id: metas.map((m) => m.id).join(','),
+            title: `${metas.length} colecciones`,
+            handle: 'multi',
+            collections: metas,
+          };
+        }
+      } else if (ids.length && !all) {
+        products = await productsAdmin.getByIds(shop, ids);
       } else {
-        products = await productsAdmin.getByIds(shop, productIds);
+        products = await productsAdmin.listAll(shop);
       }
 
       const variantIds = products.flatMap((p) => (p.variants || []).map((v) => v.id));
@@ -452,19 +531,27 @@ function createUseCases({
       const csv = rowsToCsv(rows);
       const xlsx = rowsToXlsxBuffer(rows);
       const stamp = Date.now();
-      const base = `syspricing-individual-pricing-${stamp}`;
+      const slug = collectionMeta?.handle || collectionMeta?.title || 'catalog';
+      const safeSlug = String(slug)
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'catalog';
+      const base = `syspricing-individual-pricing-${safeSlug}-${stamp}`;
 
       await log(
         shop,
         'csv.export',
-        'Product',
-        productIds.length === 1 ? productIds[0] : null,
+        hasCollection ? 'Collection' : 'Product',
+        collectionMeta?.id || (ids.length === 1 ? ids[0] : null),
         {
           products: products.length,
           variants: rows.length - 1,
           prices: priceCount,
           tags: tagOrder.length,
           format,
+          collection: collectionMeta,
+          collectionCount: collIds.length || (collectionHandle ? 1 : 0),
         },
         actor
       );
@@ -477,6 +564,7 @@ function createUseCases({
           variants: Math.max(rows.length - 1, 0),
           prices: priceCount,
           tags: tagOrder,
+          collection: collectionMeta,
           format: format === 'csv' ? 'csv' : 'xlsx',
           filename: format === 'csv' ? `${base}.csv` : `${base}.xlsx`,
           sheet: 'Individual_Price',
