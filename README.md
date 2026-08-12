@@ -24,7 +24,7 @@ See [VISION.md](./VISION.md) and [ARCHITECTURE.md](./ARCHITECTURE.md).
 | Host | `https://syspricing.shopify.somosface.erpsys.pro` |
 | Puerto | **3012** → `:3000` |
 | Contenedor | `erpsys-syspricing-somosface` |
-| Rama / carpeta | `deploy/somosface` → `/opt/erpsys/syspricing-somosface` |
+| Rama / carpeta | `deploy/somosface` → `/var/www/erpsys-v1-docker/docker/syspricing_somosface` |
 | DB | sql.js → `DATA_DIR/syspricing.sqlite` |
 | Health | `GET /health` |
 
@@ -47,6 +47,7 @@ npm install && npm run test:smoke
 | PUT | `/api/v1/prices/matrix` |
 | GET | `/api/v1/products?q=` |
 | POST | `/api/v1/import/csv` |
+| POST | `/api/v1/export/csv` (`productIds` o `all: true`) |
 | GET | `/api/v1/customers?q=` |
 | GET | `/api/v1/resolve?tags=DPAÑUELOS,MPAÑUELOS&variantId=` |
 | GET | `/api/v1/activity` |

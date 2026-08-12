@@ -358,7 +358,135 @@ function createUseCases({
     },
   };
 
-  return { priceLists, prices, importCsv, activity, resolve, customers, products, dashboard };
+  const exportCsv = {
+    async run(shop, { productIds = [], all = false } = {}, actor = 'admin') {
+      if (all || !productIds || !productIds.length) {
+        return this.runAll(shop, actor);
+      }
+      if (!productsAdmin) throw new DomainError('Products admin not configured', 'NO_CLIENT', 503);
+      const ids = (productIds || []).map(String).filter(Boolean);
+      if (!ids.length) {
+        throw new DomainError('productIds required', 'VALIDATION', 400);
+      }
+
+      const products = await productsAdmin.getByIds(shop, ids);
+      const lists = priceListRepo.list(shop);
+      const listById = new Map(lists.map((pl) => [pl.id, pl]));
+      const variantIds = products.flatMap((p) =>
+        p.variants.flatMap((v) => {
+          const gid = String(v.id);
+          const numeric = gid.replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+          return [gid, numeric];
+        })
+      );
+      const existing = variantPriceRepo.listByVariantIds(shop, [...new Set(variantIds)]);
+      const byVariant = new Map();
+      for (const vp of existing) {
+        const key = String(vp.shopifyVariantId);
+        if (!byVariant.has(key)) byVariant.set(key, []);
+        byVariant.get(key).push(vp);
+      }
+
+      const rows = [['sku', 'variant_id', 'tag', 'price']];
+      let priceCount = 0;
+
+      for (const product of products) {
+        for (const variant of product.variants) {
+          const gid = String(variant.id);
+          const numeric = gid.replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+          const fromDb = [
+            ...(byVariant.get(gid) || []),
+            ...(byVariant.get(numeric) || []),
+          ];
+          const seenTags = new Set();
+
+          for (const vp of fromDb) {
+            const pl = listById.get(vp.priceListId);
+            if (!pl || !pl.tag) continue;
+            const tag = String(pl.tag);
+            if (seenTags.has(tag)) continue;
+            seenTags.add(tag);
+            rows.push([variant.sku || '', numeric, tag, String(vp.price)]);
+            priceCount += 1;
+          }
+
+          const meta = variant.pricesByTag || {};
+          for (const [tag, price] of Object.entries(meta)) {
+            if (!tag || price == null || price === '') continue;
+            if (seenTags.has(tag)) continue;
+            seenTags.add(tag);
+            rows.push([variant.sku || '', numeric, tag, String(price)]);
+            priceCount += 1;
+          }
+        }
+      }
+
+      const csv = rowsToCsv(rows);
+      await log(
+        shop,
+        'csv.export',
+        'Product',
+        ids.length === 1 ? ids[0] : null,
+        { products: products.length, prices: priceCount },
+        actor
+      );
+
+      return {
+        csv,
+        meta: {
+          products: products.length,
+          prices: priceCount,
+          filename: `syspricing-export-${Date.now()}.csv`,
+        },
+      };
+    },
+
+    async runAll(shop, actor = 'admin') {
+      const lists = priceListRepo.list(shop);
+      const listById = new Map(lists.map((pl) => [pl.id, pl]));
+      const rows = [['sku', 'variant_id', 'tag', 'price']];
+      let priceCount = 0;
+
+      for (const pl of lists) {
+        const prices = variantPriceRepo.listByPriceList(pl.id);
+        for (const vp of prices) {
+          const numeric = String(vp.shopifyVariantId || '').replace(
+            /^gid:\/\/shopify\/ProductVariant\//,
+            ''
+          );
+          if (!numeric || numeric.startsWith('sku:')) continue;
+          rows.push([vp.sku || '', numeric, pl.tag, String(vp.price)]);
+          priceCount += 1;
+        }
+      }
+
+      const csv = rowsToCsv(rows);
+      await log(shop, 'csv.export', 'PriceList', null, { prices: priceCount, all: true }, actor);
+      return {
+        csv,
+        meta: {
+          products: null,
+          prices: priceCount,
+          filename: `syspricing-export-all-${Date.now()}.csv`,
+        },
+      };
+    },
+  };
+
+  return { priceLists, prices, importCsv, exportCsv, activity, resolve, customers, products, dashboard };
+}
+
+function rowsToCsv(rows) {
+  return rows
+    .map((cols) =>
+      cols
+        .map((c) => {
+          const s = String(c == null ? '' : c);
+          return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        })
+        .join(',')
+    )
+    .join('\n');
 }
 
 function parseCsv(text) {

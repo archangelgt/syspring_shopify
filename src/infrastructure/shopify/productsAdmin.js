@@ -62,7 +62,67 @@ function createProductsAdmin({ getAdminClient }) {
     });
   }
 
-  return { search };
+  async function getByIds(shop, ids = []) {
+    const client = await clientOrThrow(shop);
+    const unique = [...new Set((ids || []).map(String).filter(Boolean))];
+    if (!unique.length) return [];
+
+    const data = await client.request(
+      `#graphql
+      query ProductsByIds($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product {
+            id
+            title
+            variants(first: 100) {
+              edges {
+                node {
+                  id
+                  title
+                  sku
+                  price
+                  metafield(namespace: "syspricing", key: "prices") {
+                    value
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { variables: { ids: unique.slice(0, 100) } }
+    );
+
+    if (data.errors?.length) {
+      throw new DomainError(data.errors[0].message || 'Product fetch failed', 'SHOPIFY_ERROR', 502);
+    }
+
+    return (data.data?.nodes || [])
+      .filter((n) => n && n.id)
+      .map((node) => ({
+        id: node.id,
+        title: node.title,
+        variants: (node.variants?.edges || []).map((ve) => {
+          let pricesByTag = {};
+          try {
+            pricesByTag = ve.node.metafield?.value
+              ? JSON.parse(ve.node.metafield.value)
+              : {};
+          } catch (_err) {
+            pricesByTag = {};
+          }
+          return {
+            id: ve.node.id,
+            title: ve.node.title,
+            sku: ve.node.sku || null,
+            price: ve.node.price,
+            pricesByTag,
+          };
+        }),
+      }));
+  }
+
+  return { search, getByIds };
 }
 
 module.exports = { createProductsAdmin };

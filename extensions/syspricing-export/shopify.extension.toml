@@ -1,0 +1,11 @@
+api_version = "2025-10"
+
+[[extensions]]
+name = "t:name"
+handle = "syspricing-export"
+uid = "2a14b0c1-ccdc-4046-8f82-48db4fb0a878"
+type = "ui_extension"
+
+[[extensions.targeting]]
+module = "./src/ExportAction.jsx"
+target = "admin.product-index.selection-action.render"

@@ -2,7 +2,7 @@
 # SomosFace instance — create a NEW Partner app with Custom distribution
 # anchored to somosface.myshopify.com (the Seraph Plus org app cannot install here).
 name = "syspricing-somosface"
-client_id = "REPLACE_WITH_NEW_PARTNER_APP_CLIENT_ID"
+client_id = "d59a7904d1ca1dc6e64cbbae8fa047bb"
 application_url = "https://syspricing.shopify.somosface.erpsys.pro"
 embedded = true
 

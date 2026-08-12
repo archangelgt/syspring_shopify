@@ -141,9 +141,12 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     `;
   } else if (active === 'import') {
     panel = `
-      <h2>Importar CSV</h2>
+      <h2>Importar / Exportar CSV</h2>
       <p class="muted">Columnas: <code>sku</code>, <code>variant_id</code>, <code>tag</code>, <code>price</code> (opcional: <code>compare_at_price</code>).</p>
       <div id="flash"></div>
+      <div class="home-actions" style="margin:0 0 0.75rem">
+        <button type="button" id="btn-export-csv" class="btn-secondary">Exportar precios</button>
+      </div>
       <form id="csv-form">
         <textarea name="csv" rows="12" style="width:100%;font-family:ui-monospace,monospace"
           placeholder="sku,variant_id,tag,price&#10;A3545602,52140925550894,mayorista,80.77"></textarea>
@@ -413,6 +416,36 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
         el.textContent = JSON.stringify(res.data, null, 2);
       }).catch(function (e) { flash(e.message, 'err'); });
     };
+
+    var exportBtn = document.getElementById('btn-export-csv');
+    if (exportBtn) {
+      exportBtn.onclick = function () {
+        exportBtn.disabled = true;
+        api('/export/csv', {
+          method: 'POST',
+          body: JSON.stringify({ all: true })
+        }).then(function (res) {
+          var csv = (res.data && res.data.csv) || '';
+          var name = (res.data && res.data.meta && res.data.meta.filename) || 'syspricing-export.csv';
+          var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          flash('Export: ' + ((res.data && res.data.meta && res.data.meta.prices) || 0) + ' precios', 'ok');
+          var el = document.getElementById('csv-result');
+          if (el) {
+            el.style.display = 'block';
+            el.textContent = csv.slice(0, 4000) + (csv.length > 4000 ? '\\n…' : '');
+          }
+        }).catch(function (e) { flash(e.message, 'err'); })
+          .then(function () { exportBtn.disabled = false; });
+      };
+    }
   }
 
   if (TAB === 'customers') {

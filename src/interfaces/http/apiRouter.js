@@ -100,6 +100,38 @@ function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafiel
     }
   });
 
+  router.post('/export/csv', async (req, res, next) => {
+    try {
+      if (!useCases.exportCsv) {
+        throw new DomainError('Export not available', 'NO_EXPORT', 503);
+      }
+      const productIds = Array.isArray(req.body?.productIds)
+        ? req.body.productIds
+        : String(req.body?.productIds || req.query.productIds || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      const all =
+        Boolean(req.body?.all || req.query.all === '1') || productIds.length === 0;
+      const data = await useCases.exportCsv.run(req.shop, {
+        productIds,
+        all,
+      });
+      if (req.query.download === '1' || req.body?.download) {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${data.meta.filename || 'syspricing-export.csv'}"`
+        );
+        res.send(data.csv);
+        return;
+      }
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get('/customers', async (req, res, next) => {
     try {
       const data = await useCases.customers.search(req.shop, {

@@ -1,0 +1,13 @@
+{
+  "name": "SYSPRICING Export",
+  "title": "Export B2B prices",
+  "description": "Export SYSPRICING prices for selected products as CSV.",
+  "loading": "Building CSV…",
+  "ready": "{{count}} price rows ready",
+  "empty": "No SYSPRICING prices found for the selected products.",
+  "download": "Download CSV",
+  "copy": "Copy CSV",
+  "copied": "Copied",
+  "cancel": "Close",
+  "error": "Export failed"
+}
