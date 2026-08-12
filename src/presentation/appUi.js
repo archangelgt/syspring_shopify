@@ -141,15 +141,22 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
     `;
   } else if (active === 'import') {
     panel = `
-      <h2>Importar / Exportar CSV</h2>
-      <p class="muted">Columnas: <code>sku</code>, <code>variant_id</code>, <code>tag</code>, <code>price</code> (opcional: <code>compare_at_price</code>).</p>
+      <h2>Importar / Exportar precios</h2>
+      <p class="muted">
+        Formato matriz (como WPD): <code>product_id, variant_id, variant_name, sku, original_price, TAG1, TAG2…</code>
+        — también acepta el CSV largo <code>sku,variant_id,tag,price</code>.
+      </p>
       <div id="flash"></div>
       <div class="home-actions" style="margin:0 0 0.75rem">
-        <button type="button" id="btn-export-csv" class="btn-secondary">Exportar precios</button>
+        <button type="button" id="btn-export-csv" class="btn-secondary">Exportar Excel</button>
+        <label class="btn-ghost" style="cursor:pointer;margin:0">
+          Subir Excel/CSV
+          <input type="file" id="csv-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" />
+        </label>
       </div>
       <form id="csv-form">
         <textarea name="csv" rows="12" style="width:100%;font-family:ui-monospace,monospace"
-          placeholder="sku,variant_id,tag,price&#10;A3545602,52140925550894,mayorista,80.77"></textarea>
+          placeholder="product_id,variant_id,variant_name,sku,original_price,DFACE,DPAÑUELOS&#10;1043…,5577…,BOLSA - Default Title,,15,,,80.77"></textarea>
         <button type="submit" style="margin-top:0.75rem">Importar</button>
       </form>
       <pre id="csv-result" class="card" style="display:none;white-space:pre-wrap"></pre>
@@ -410,12 +417,27 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
         method: 'POST',
         body: JSON.stringify({ csv: fd.get('csv') })
       }).then(function (res) {
-        flash('Import completado', 'ok');
+        flash('Import completado (' + ((res.data && res.data.format) || 'ok') + ')', 'ok');
         var el = document.getElementById('csv-result');
         el.style.display = 'block';
         el.textContent = JSON.stringify(res.data, null, 2);
       }).catch(function (e) { flash(e.message, 'err'); });
     };
+
+    function downloadBase64(b64, filename, mime) {
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var blob = new Blob([bytes], { type: mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
 
     var exportBtn = document.getElementById('btn-export-csv');
     if (exportBtn) {
@@ -423,27 +445,48 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
         exportBtn.disabled = true;
         api('/export/csv', {
           method: 'POST',
-          body: JSON.stringify({ all: true })
+          body: JSON.stringify({ all: true, format: 'xlsx' })
         }).then(function (res) {
-          var csv = (res.data && res.data.csv) || '';
-          var name = (res.data && res.data.meta && res.data.meta.filename) || 'syspricing-export.csv';
-          var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          a.href = url;
-          a.download = name;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-          flash('Export: ' + ((res.data && res.data.meta && res.data.meta.prices) || 0) + ' precios', 'ok');
-          var el = document.getElementById('csv-result');
-          if (el) {
-            el.style.display = 'block';
-            el.textContent = csv.slice(0, 4000) + (csv.length > 4000 ? '\\n…' : '');
-          }
+          var meta = (res.data && res.data.meta) || {};
+          downloadBase64(
+            res.data.xlsxBase64,
+            meta.filename || 'syspricing-individual-pricing.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          );
+          flash('Export: ' + (meta.variants || 0) + ' variantes, ' + (meta.prices || 0) + ' precios', 'ok');
         }).catch(function (e) { flash(e.message, 'err'); })
           .then(function () { exportBtn.disabled = false; });
+      };
+    }
+
+    var fileInput = document.getElementById('csv-file');
+    if (fileInput) {
+      fileInput.onchange = function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+          var result = String(reader.result || '');
+          var isXlsx = /\\.xlsx?$/i.test(file.name) || result.indexOf('data:application') === 0;
+          var body;
+          if (isXlsx) {
+            var b64 = result.indexOf('base64,') >= 0 ? result.split('base64,')[1] : result;
+            body = { xlsxBase64: b64 };
+          } else {
+            body = { csv: result };
+          }
+          api('/import/csv', { method: 'POST', body: JSON.stringify(body) })
+            .then(function (res) {
+              flash('Import completado (' + ((res.data && res.data.format) || 'ok') + ')', 'ok');
+              var el = document.getElementById('csv-result');
+              el.style.display = 'block';
+              el.textContent = JSON.stringify(res.data, null, 2);
+            })
+            .catch(function (e) { flash(e.message, 'err'); });
+        };
+        if (/\\.xlsx?$/i.test(file.name)) reader.readAsDataURL(file);
+        else reader.readAsText(file);
+        fileInput.value = '';
       };
     }
   }

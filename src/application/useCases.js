@@ -9,6 +9,17 @@ const {
   nowIso,
 } = require('../domain/entities');
 const { NotFoundError, ConflictError, DomainError } = require('../domain/errors');
+const {
+  isMatrixHeaders,
+  buildPriceLookup,
+  collectTagOrder,
+  buildMatrixRows,
+  rowsToCsv,
+  rowsToXlsxBuffer,
+  parseSpreadsheet,
+  matrixRowsToPriceUpserts,
+  parseCsvText,
+} = require('./pricingMatrix');
 
 function createUseCases({
   priceListRepo,
@@ -194,35 +205,91 @@ function createUseCases({
   };
 
   const importCsv = {
-    async run(shop, csvText, { priceListId, tag } = {}, actor = 'admin') {
-      const rows = parseCsv(csvText);
-      const mapped = [];
-      for (const r of rows) {
-        const rowTag = normalizeTag(r.tag || r.TAG || tag || '');
-        let listId = priceListId;
-        if (!listId && rowTag) {
-          const pl = priceListRepo.getByTag(shop, rowTag);
-          if (!pl) {
-            mapped.push({ _error: `Unknown tag: ${rowTag}`, ...r });
-            continue;
-          }
-          listId = pl.id;
-        }
-        if (!listId) {
-          mapped.push({ _error: 'tag or priceListId required', ...r });
-          continue;
-        }
-        mapped.push({
-          _priceListId: listId,
-          sku: r.sku || r.SKU || null,
-          shopifyVariantId: r.variant_id || r.variantId || r.shopify_variant_id || null,
-          shopifyProductId: r.product_id || r.productId || null,
-          price: r.price,
-          compareAtPrice: r.compare_at_price || r.compareAtPrice || null,
-        });
+    async run(
+      shop,
+      input,
+      { priceListId, tag, createMissingLists = true } = {},
+      actor = 'admin'
+    ) {
+      const payload =
+        typeof input === 'string'
+          ? { csv: input }
+          : input && typeof input === 'object'
+            ? input
+            : { csv: '' };
+
+      const parsed = parseSpreadsheet(payload);
+      const { headers, rows } = parsed;
+      if (!headers.length) {
+        throw new DomainError('Empty spreadsheet', 'VALIDATION', 400);
       }
 
-      const results = { created: 0, updated: 0, errors: [] };
+      const results = {
+        created: 0,
+        updated: 0,
+        errors: [],
+        format: isMatrixHeaders(headers) ? 'matrix' : 'long',
+        listsCreated: [],
+      };
+
+      const ensureList = (rawTag) => {
+        const t = normalizeTag(rawTag);
+        if (!t) return null;
+        let pl = priceListRepo.getByTag(shop, t);
+        if (pl) return pl;
+        if (!createMissingLists) return null;
+        pl = createPriceList({
+          shop,
+          tag: t,
+          name: String(rawTag || t).trim() || t,
+          status: 'active',
+          priority: 0,
+          currency: 'GTQ',
+        });
+        priceListRepo.create(pl);
+        results.listsCreated.push(t);
+        return pl;
+      };
+
+      let mapped = [];
+      if (isMatrixHeaders(headers)) {
+        const matrix = matrixRowsToPriceUpserts(headers, rows, {
+          normalizeTag,
+          ensureList,
+        });
+        mapped = matrix.mapped;
+        results.errors.push(...matrix.errors);
+      } else {
+        for (const r of rows) {
+          const lower = {};
+          Object.keys(r).forEach((k) => {
+            lower[String(k).trim().toLowerCase()] = r[k];
+          });
+          const rowTag = normalizeTag(lower.tag || tag || '');
+          let listId = priceListId;
+          if (!listId && rowTag) {
+            const pl = ensureList(rowTag);
+            if (!pl) {
+              mapped.push({ _error: `Unknown tag: ${rowTag}`, ...r });
+              continue;
+            }
+            listId = pl.id;
+          }
+          if (!listId) {
+            mapped.push({ _error: 'tag or priceListId required', ...r });
+            continue;
+          }
+          mapped.push({
+            _priceListId: listId,
+            sku: lower.sku || null,
+            shopifyVariantId: lower.variant_id || lower.variantid || lower.shopify_variant_id || null,
+            shopifyProductId: lower.product_id || lower.productid || null,
+            price: lower.price,
+            compareAtPrice: lower.compare_at_price || lower.compareatprice || null,
+          });
+        }
+      }
+
       const byList = new Map();
       mapped.forEach((row, i) => {
         if (row._error) {
@@ -359,115 +426,60 @@ function createUseCases({
   };
 
   const exportCsv = {
-    async run(shop, { productIds = [], all = false } = {}, actor = 'admin') {
-      if (all || !productIds || !productIds.length) {
-        return this.runAll(shop, actor);
-      }
+    async run(
+      shop,
+      { productIds = [], all = false, format = 'xlsx' } = {},
+      actor = 'admin'
+    ) {
       if (!productsAdmin) throw new DomainError('Products admin not configured', 'NO_CLIENT', 503);
-      const ids = (productIds || []).map(String).filter(Boolean);
-      if (!ids.length) {
-        throw new DomainError('productIds required', 'VALIDATION', 400);
+
+      let products;
+      if (all || !productIds || !productIds.length) {
+        products = await productsAdmin.listAll(shop);
+      } else {
+        products = await productsAdmin.getByIds(shop, productIds);
       }
 
-      const products = await productsAdmin.getByIds(shop, ids);
-      const lists = priceListRepo.list(shop);
-      const listById = new Map(lists.map((pl) => [pl.id, pl]));
-      const variantIds = products.flatMap((p) =>
-        p.variants.flatMap((v) => {
-          const gid = String(v.id);
-          const numeric = gid.replace(/^gid:\/\/shopify\/ProductVariant\//, '');
-          return [gid, numeric];
-        })
+      const variantIds = products.flatMap((p) => (p.variants || []).map((v) => v.id));
+      const { lists, byVariantTag } = buildPriceLookup(
+        variantPriceRepo,
+        priceListRepo,
+        shop,
+        variantIds
       );
-      const existing = variantPriceRepo.listByVariantIds(shop, [...new Set(variantIds)]);
-      const byVariant = new Map();
-      for (const vp of existing) {
-        const key = String(vp.shopifyVariantId);
-        if (!byVariant.has(key)) byVariant.set(key, []);
-        byVariant.get(key).push(vp);
-      }
-
-      const rows = [['sku', 'variant_id', 'tag', 'price']];
-      let priceCount = 0;
-
-      for (const product of products) {
-        for (const variant of product.variants) {
-          const gid = String(variant.id);
-          const numeric = gid.replace(/^gid:\/\/shopify\/ProductVariant\//, '');
-          const fromDb = [
-            ...(byVariant.get(gid) || []),
-            ...(byVariant.get(numeric) || []),
-          ];
-          const seenTags = new Set();
-
-          for (const vp of fromDb) {
-            const pl = listById.get(vp.priceListId);
-            if (!pl || !pl.tag) continue;
-            const tag = String(pl.tag);
-            if (seenTags.has(tag)) continue;
-            seenTags.add(tag);
-            rows.push([variant.sku || '', numeric, tag, String(vp.price)]);
-            priceCount += 1;
-          }
-
-          const meta = variant.pricesByTag || {};
-          for (const [tag, price] of Object.entries(meta)) {
-            if (!tag || price == null || price === '') continue;
-            if (seenTags.has(tag)) continue;
-            seenTags.add(tag);
-            rows.push([variant.sku || '', numeric, tag, String(price)]);
-            priceCount += 1;
-          }
-        }
-      }
-
+      const tagOrder = collectTagOrder(lists, byVariantTag, products);
+      const { rows, priceCount } = buildMatrixRows(products, tagOrder, byVariantTag);
       const csv = rowsToCsv(rows);
+      const xlsx = rowsToXlsxBuffer(rows);
+      const stamp = Date.now();
+      const base = `syspricing-individual-pricing-${stamp}`;
+
       await log(
         shop,
         'csv.export',
         'Product',
-        ids.length === 1 ? ids[0] : null,
-        { products: products.length, prices: priceCount },
+        productIds.length === 1 ? productIds[0] : null,
+        {
+          products: products.length,
+          variants: rows.length - 1,
+          prices: priceCount,
+          tags: tagOrder.length,
+          format,
+        },
         actor
       );
 
       return {
         csv,
+        xlsxBase64: Buffer.from(xlsx).toString('base64'),
         meta: {
           products: products.length,
+          variants: Math.max(rows.length - 1, 0),
           prices: priceCount,
-          filename: `syspricing-export-${Date.now()}.csv`,
-        },
-      };
-    },
-
-    async runAll(shop, actor = 'admin') {
-      const lists = priceListRepo.list(shop);
-      const listById = new Map(lists.map((pl) => [pl.id, pl]));
-      const rows = [['sku', 'variant_id', 'tag', 'price']];
-      let priceCount = 0;
-
-      for (const pl of lists) {
-        const prices = variantPriceRepo.listByPriceList(pl.id);
-        for (const vp of prices) {
-          const numeric = String(vp.shopifyVariantId || '').replace(
-            /^gid:\/\/shopify\/ProductVariant\//,
-            ''
-          );
-          if (!numeric || numeric.startsWith('sku:')) continue;
-          rows.push([vp.sku || '', numeric, pl.tag, String(vp.price)]);
-          priceCount += 1;
-        }
-      }
-
-      const csv = rowsToCsv(rows);
-      await log(shop, 'csv.export', 'PriceList', null, { prices: priceCount, all: true }, actor);
-      return {
-        csv,
-        meta: {
-          products: null,
-          prices: priceCount,
-          filename: `syspricing-export-all-${Date.now()}.csv`,
+          tags: tagOrder,
+          format: format === 'csv' ? 'csv' : 'xlsx',
+          filename: format === 'csv' ? `${base}.csv` : `${base}.xlsx`,
+          sheet: 'Individual_Price',
         },
       };
     },
@@ -476,59 +488,4 @@ function createUseCases({
   return { priceLists, prices, importCsv, exportCsv, activity, resolve, customers, products, dashboard };
 }
 
-function rowsToCsv(rows) {
-  return rows
-    .map((cols) =>
-      cols
-        .map((c) => {
-          const s = String(c == null ? '' : c);
-          return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-        })
-        .join(',')
-    )
-    .join('\n');
-}
-
-function parseCsv(text) {
-  const lines = String(text || '')
-    .replace(/^\uFEFF/, '')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (!lines.length) return [];
-  const headers = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
-  return lines.slice(1).map((line) => {
-    const cols = splitCsvLine(line);
-    const row = {};
-    headers.forEach((h, i) => {
-      row[h] = cols[i] != null ? cols[i].trim() : '';
-    });
-    return row;
-  });
-}
-
-function splitCsvLine(line) {
-  const out = [];
-  let cur = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        cur += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (ch === ',' && !inQuotes) {
-      out.push(cur);
-      cur = '';
-    } else {
-      cur += ch;
-    }
-  }
-  out.push(cur);
-  return out;
-}
-
-module.exports = { createUseCases, parseCsv };
+module.exports = { createUseCases, parseCsv: (text) => parseCsvText(text).rows };

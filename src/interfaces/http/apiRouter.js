@@ -5,7 +5,7 @@ const { DomainError } = require('../../domain/errors');
 
 function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafieldDefinitions }) {
   const router = express.Router();
-  router.use(express.json({ limit: '2mb' }));
+  router.use(express.json({ limit: '20mb' }));
   router.use(requireShop);
 
   router.get('/price-lists', (req, res) => {
@@ -89,11 +89,18 @@ function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafiel
 
   router.post('/import/csv', async (req, res, next) => {
     try {
-      const csv = req.body?.csv || req.body?.text || '';
-      const data = await useCases.importCsv.run(req.shop, csv, {
-        priceListId: req.body?.priceListId || req.query.priceListId,
-        tag: req.body?.tag || req.query.tag,
-      });
+      const data = await useCases.importCsv.run(
+        req.shop,
+        {
+          csv: req.body?.csv || req.body?.text || '',
+          xlsxBase64: req.body?.xlsxBase64 || req.body?.fileBase64 || null,
+        },
+        {
+          priceListId: req.body?.priceListId || req.query.priceListId,
+          tag: req.body?.tag || req.query.tag,
+          createMissingLists: req.body?.createMissingLists !== false,
+        }
+      );
       res.json({ data });
     } catch (err) {
       next(err);
@@ -113,17 +120,35 @@ function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafiel
             .filter(Boolean);
       const all =
         Boolean(req.body?.all || req.query.all === '1') || productIds.length === 0;
+      const format =
+        String(req.body?.format || req.query.format || 'xlsx').toLowerCase() === 'csv'
+          ? 'csv'
+          : 'xlsx';
       const data = await useCases.exportCsv.run(req.shop, {
         productIds,
         all,
+        format,
       });
       if (req.query.download === '1' || req.body?.download) {
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        if (format === 'csv') {
+          res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${data.meta.filename || 'syspricing-export.csv'}"`
+          );
+          res.send(data.csv);
+          return;
+        }
+        const buf = Buffer.from(data.xlsxBase64, 'base64');
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
         res.setHeader(
           'Content-Disposition',
-          `attachment; filename="${data.meta.filename || 'syspricing-export.csv'}"`
+          `attachment; filename="${data.meta.filename || 'syspricing-export.xlsx'}"`
         );
-        res.send(data.csv);
+        res.send(buf);
         return;
       }
       res.json({ data });

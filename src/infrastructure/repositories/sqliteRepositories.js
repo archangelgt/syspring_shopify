@@ -65,10 +65,14 @@ function createRepositories(db) {
       );
     },
     getByTag(shop, tag) {
+      const normalized = String(tag || '')
+        .trim()
+        .replace(/\s+/g, '')
+        .toLowerCase();
       return mapPriceList(
         db
           .prepare(`SELECT * FROM price_lists WHERE shop = ? AND tag = ?`)
-          .get(shop, String(tag).trim())
+          .get(shop, normalized)
       );
     },
     listActiveByTags(shop, tags) {

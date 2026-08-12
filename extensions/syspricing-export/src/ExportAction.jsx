@@ -5,8 +5,8 @@ export default async () => {
   render(<ExportExtension />, document.body);
 };
 
-function numericVariantId(gid) {
-  return String(gid || '').replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+function numericId(gid) {
+  return String(gid || '').replace(/^gid:\/\/shopify\/[^/]+\//, '');
 }
 
 function escapeCsv(value) {
@@ -28,7 +28,10 @@ async function fetchProducts(ids) {
           variants(first: 100) {
             nodes {
               id
+              title
+              displayName
               sku
+              price
               metafield(namespace: "syspricing", key: "prices") {
                 value
               }
@@ -39,7 +42,6 @@ async function fetchProducts(ids) {
     }
   `;
 
-  // Prefer shopify.query when available; fall back to admin GraphQL fetch.
   if (typeof shopify.query === 'function') {
     const result = await shopify.query(query, { variables: { ids } });
     return result?.data?.nodes || [];
@@ -55,6 +57,54 @@ async function fetchProducts(ids) {
     throw new Error(json.errors[0].message || 'GraphQL error');
   }
   return json.data?.nodes || [];
+}
+
+function buildMatrix(nodes) {
+  const fixed = ['product_id', 'variant_id', 'variant_name', 'sku', 'original_price'];
+  const tagSet = new Set();
+  const variants = [];
+
+  for (const product of nodes) {
+    if (!product?.id) continue;
+    for (const variant of product.variants?.nodes || []) {
+      let prices = {};
+      try {
+        prices = variant.metafield?.value ? JSON.parse(variant.metafield.value) : {};
+      } catch (_err) {
+        prices = {};
+      }
+      Object.keys(prices || {}).forEach((t) => tagSet.add(t));
+      variants.push({
+        productId: numericId(product.id),
+        variantId: numericId(variant.id),
+        variantName:
+          variant.displayName ||
+          (product.title && variant.title && variant.title !== 'Default Title'
+            ? `${product.title} - ${variant.title}`
+            : product.title || variant.title || ''),
+        sku: variant.sku || '',
+        originalPrice: variant.price != null ? String(variant.price) : '',
+        prices: prices || {},
+      });
+    }
+  }
+
+  const tags = [...tagSet].sort((a, b) => a.localeCompare(b));
+  const rows = [[...fixed, ...tags]];
+  let priceCount = 0;
+  for (const v of variants) {
+    const row = [v.productId, v.variantId, v.variantName, v.sku, v.originalPrice];
+    for (const tag of tags) {
+      const val = v.prices[tag];
+      if (val == null || val === '') row.push('');
+      else {
+        row.push(String(val));
+        priceCount += 1;
+      }
+    }
+    rows.push(row);
+  }
+  return { rows, priceCount, variantCount: variants.length };
 }
 
 function ExportExtension() {
@@ -78,36 +128,15 @@ function ExportExtension() {
         if (!productIds.length) {
           setStatus('empty');
           setCount(0);
-          setCsv('sku,variant_id,tag,price');
+          setCsv('product_id,variant_id,variant_name,sku,original_price');
           return;
         }
         const nodes = await fetchProducts(productIds);
-        const rows = [['sku', 'variant_id', 'tag', 'price']];
-        let n = 0;
-        for (const product of nodes) {
-          if (!product?.id) continue;
-          const variants = product.variants?.nodes || [];
-          for (const variant of variants) {
-            let prices = {};
-            try {
-              prices = variant.metafield?.value
-                ? JSON.parse(variant.metafield.value)
-                : {};
-            } catch (_err) {
-              prices = {};
-            }
-            const variantId = numericVariantId(variant.id);
-            for (const [tag, price] of Object.entries(prices || {})) {
-              if (!tag || price == null || price === '') continue;
-              rows.push([variant.sku || '', variantId, tag, String(price)]);
-              n += 1;
-            }
-          }
-        }
+        const { rows, priceCount, variantCount } = buildMatrix(nodes);
         if (cancelled) return;
         setCsv(buildCsv(rows));
-        setCount(n);
-        setStatus(n ? 'ready' : 'empty');
+        setCount(priceCount);
+        setStatus(variantCount ? (priceCount ? 'ready' : 'empty') : 'empty');
       } catch (err) {
         if (cancelled) return;
         setError(err?.message || String(err));
@@ -134,7 +163,7 @@ function ExportExtension() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `syspricing-export-${Date.now()}.csv`;
+    a.download = `syspricing-individual-pricing-${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -171,7 +200,7 @@ function ExportExtension() {
       <s-button
         slot="primary-action"
         variant="primary"
-        disabled={status !== 'ready'}
+        disabled={status === 'loading' || status === 'error'}
         onClick={onDownload}
       >
         {i18n.translate('download')}
