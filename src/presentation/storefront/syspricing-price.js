@@ -1,6 +1,6 @@
 /**
  * SYSPRICING storefront — catalog (line-through) + B2B side by side.
- * Works on PDP (.syspricing-b2b-price) and collection cards (.syspricing-grid-item).
+ * PDP: .syspricing-b2b-price | Collection: .syspricing-grid-item (+ proxy batch)
  */
 (function () {
   function formatMoney(price, currency) {
@@ -47,31 +47,31 @@
       '.card-price',
       '[data-product-price]',
       '.price__regular',
-      '.price-item--regular'
+      '.price-item--regular',
+      '.product-item-price',
+      '.product__price'
     ];
     for (var i = 0; i < selectors.length; i++) {
       var el = item.querySelector(selectors[i]);
       if (el) return el;
     }
+    var candidates = item.querySelectorAll('span, div, p, b, strong');
+    for (var j = 0; j < candidates.length; j++) {
+      var node = candidates[j];
+      if (node.children && node.children.length) continue;
+      var t = String(node.textContent || '').trim();
+      if (/^Q\s*[\d.,]+$/.test(t) || /^[\d.,]+\s*GTQ$/i.test(t)) return node;
+    }
     return null;
   }
 
-  function applyGridItem(item) {
-    if (!item || item.getAttribute('data-syspricing-grid-booted') === '1') return;
-    if (item.getAttribute('data-has-b2b') !== '1') return;
-    item.setAttribute('data-syspricing-grid-booted', '1');
-
-    var b2b = item.getAttribute('data-b2b-price');
-    var tag = item.getAttribute('data-b2b-tag') || '';
-    var compareRaw = item.getAttribute('data-compare-price') || '';
-    if (b2b == null || b2b === '') return;
-
+  function paintCard(item, b2bPrice, tag, currency) {
     var priceNode = findCardPriceNode(item);
-    if (!priceNode) return;
-
-    var compareText = formatCompareMoney(compareRaw, 'GTQ');
-    var b2bText = formatMoney(Number(b2b), 'GTQ');
-    var html =
+    if (!priceNode) return false;
+    var compareRaw = item.getAttribute('data-compare-price') || '';
+    var compareText = formatCompareMoney(compareRaw, currency);
+    var b2bText = formatMoney(Number(b2bPrice), currency);
+    priceNode.innerHTML =
       '<span class="syspricing-card-price">' +
       (compareText ? '<span class="syspricing-compare">' + compareText + '</span> ' : '') +
       '<span class="syspricing-amount">' +
@@ -79,12 +79,74 @@
       '</span>' +
       (tag ? ' <span class="syspricing-tag">(' + tag + ')</span>' : '') +
       '</span>';
-    priceNode.innerHTML = html;
+    item.setAttribute('data-has-b2b', '1');
+    item.classList.add('syspricing-grid-item--b2b');
+    return true;
   }
 
-  function bootGrid() {
-    var items = document.querySelectorAll('.syspricing-grid-item[data-has-b2b="1"]');
-    for (var i = 0; i < items.length; i++) applyGridItem(items[i]);
+  function applyGridItemFromData(item, currency) {
+    if (!item || item.getAttribute('data-syspricing-grid-painted') === '1') return;
+    if (item.getAttribute('data-has-b2b') !== '1') return;
+    var b2b = item.getAttribute('data-b2b-price');
+    if (b2b == null || b2b === '') return;
+    if (paintCard(item, b2b, item.getAttribute('data-b2b-tag') || '', currency || 'GTQ')) {
+      item.setAttribute('data-syspricing-grid-painted', '1');
+    }
+  }
+
+  function fetchGridPrices() {
+    var boot = document.getElementById('syspricing-collection-boot');
+    if (!boot || boot.getAttribute('data-logged-in') !== '1') return;
+
+    var items = document.querySelectorAll('.syspricing-grid-item[data-variant-id]');
+    if (!items.length) return;
+
+    var currency = boot.getAttribute('data-currency') || 'GTQ';
+    var tags = boot.getAttribute('data-customer-tags') || '';
+    var proxy = boot.getAttribute('data-proxy') || '/apps/syspricing/prices';
+
+    // Instant paint from Liquid metafields when present
+    for (var i = 0; i < items.length; i++) applyGridItemFromData(items[i], currency);
+
+    var ids = [];
+    for (var j = 0; j < items.length; j++) {
+      var id = items[j].getAttribute('data-variant-id');
+      if (id) ids.push(id);
+    }
+    if (!ids.length) return;
+
+    var params = new URLSearchParams();
+    params.set('variant_ids', ids.join(','));
+    if (tags) params.set('tags', tags);
+    var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
+
+    fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('proxy');
+        return r.json();
+      })
+      .then(function (body) {
+        var prices = (body && body.data && body.data.prices) || {};
+        for (var k = 0; k < items.length; k++) {
+          var item = items[k];
+          var vid = item.getAttribute('data-variant-id');
+          var info = pickPrice(prices, vid);
+          if (!info || info.price == null || info.price === '') continue;
+          if (
+            paintCard(
+              item,
+              info.price,
+              info.matchedTag || item.getAttribute('data-b2b-tag') || '',
+              info.currency || currency
+            )
+          ) {
+            item.setAttribute('data-syspricing-grid-painted', '1');
+            item.setAttribute('data-b2b-price', String(info.price));
+            if (info.matchedTag) item.setAttribute('data-b2b-tag', info.matchedTag);
+          }
+        }
+      })
+      .catch(function () {});
   }
 
   function boot(root) {
@@ -205,7 +267,7 @@
   function init() {
     var nodes = document.querySelectorAll('#syspricing-b2b-price, .syspricing-b2b-price');
     for (var i = 0; i < nodes.length; i++) boot(nodes[i]);
-    bootGrid();
+    fetchGridPrices();
   }
 
   if (document.readyState === 'loading') {
@@ -214,14 +276,13 @@
     init();
   }
 
-  // Facets / infinite loads often replace the grid
   document.addEventListener('shopify:section:load', init);
   var grid = document.getElementById('CollectionProductGrid');
   if (grid && window.MutationObserver) {
     var t = null;
     new MutationObserver(function () {
       clearTimeout(t);
-      t = setTimeout(bootGrid, 80);
+      t = setTimeout(fetchGridPrices, 120);
     }).observe(grid, { childList: true, subtree: true });
   }
 })();

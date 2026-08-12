@@ -20,9 +20,9 @@
   assign catalog_price = sp_variant.price
 
   if prices_map != blank
-    for tag in customer.tags
-      assign tag_key = tag | strip
-      assign candidate = prices_map[tag_key]
+                for tag in customer.tags
+                  assign tag_key = tag | strip | downcase
+                  assign candidate = prices_map[tag_key]
       if candidate == blank
         continue
       endif
