@@ -119,7 +119,9 @@ function resolveVariantPrice({ customerTags, priceLists, variantPrices, shopifyV
     const match = (variantPrices || []).find(
       (vp) =>
         vp.priceListId === priceList.id &&
-        String(vp.shopifyVariantId) === String(shopifyVariantId)
+        (String(vp.shopifyVariantId) === String(shopifyVariantId) ||
+          String(vp.shopifyVariantId).replace(/^gid:\/\/shopify\/ProductVariant\//, '') ===
+            String(shopifyVariantId).replace(/^gid:\/\/shopify\/ProductVariant\//, ''))
     );
     if (match) {
       return {

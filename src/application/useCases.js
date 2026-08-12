@@ -21,6 +21,31 @@ const {
   parseCsvText,
 } = require('./pricingMatrix');
 
+function numericVariantId(gidOrId) {
+  return String(gidOrId || '').replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+}
+
+function expandVariantIdKeys(ids) {
+  const out = new Set();
+  for (const raw of ids || []) {
+    const s = String(raw || '').trim();
+    if (!s) continue;
+    out.add(s);
+    const num = numericVariantId(s);
+    if (num) {
+      out.add(num);
+      out.add(`gid://shopify/ProductVariant/${num}`);
+    }
+  }
+  return [...out];
+}
+
+function variantIdsMatch(a, b) {
+  if (a == null || b == null) return false;
+  if (String(a) === String(b)) return true;
+  return numericVariantId(a) === numericVariantId(b);
+}
+
 function createUseCases({
   priceListRepo,
   variantPriceRepo,
@@ -384,15 +409,17 @@ function createUseCases({
     async search(shop, { query, first } = {}) {
       if (!productsAdmin) throw new DomainError('Products admin not configured', 'NO_CLIENT', 503);
       const items = await productsAdmin.search(shop, { query, first });
-      const variantIds = items.flatMap((p) => p.variants.map((v) => v.id));
+      const variantIds = expandVariantIdKeys(items.flatMap((p) => p.variants.map((v) => v.id)));
       const existing = variantPriceRepo.listByVariantIds(shop, variantIds);
       const lists = priceListRepo.list(shop);
       const byVariant = {};
       for (const vp of existing) {
         const pl = lists.find((l) => l.id === vp.priceListId);
         if (!pl) continue;
-        if (!byVariant[vp.shopifyVariantId]) byVariant[vp.shopifyVariantId] = {};
-        byVariant[vp.shopifyVariantId][pl.tag] = vp.price;
+        for (const key of expandVariantIdKeys([vp.shopifyVariantId])) {
+          if (!byVariant[key]) byVariant[key] = {};
+          byVariant[key][pl.tag] = vp.price;
+        }
       }
       return {
         priceLists: lists.filter((l) => l.status === 'active' || l.status === 'draft'),
@@ -400,10 +427,7 @@ function createUseCases({
           ...p,
           variants: p.variants.map((v) => ({
             ...v,
-            tagPrices:
-              byVariant[v.id] ||
-              byVariant[String(v.id).replace(/^gid:\/\/shopify\/ProductVariant\//, '')] ||
-              {},
+            tagPrices: byVariant[v.id] || byVariant[numericVariantId(v.id)] || {},
           })),
         })),
       };
