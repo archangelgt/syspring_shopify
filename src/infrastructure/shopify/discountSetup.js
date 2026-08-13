@@ -44,17 +44,8 @@ function createDiscountSetup({ functionHandle = FUNCTION_HANDLE } = {}) {
     }
 
     const functionId = await resolveFunctionId(client, functionHandle);
-    if (!functionId) {
-      return {
-        ok: false,
-        reason: 'NO_FUNCTION',
-        hint: 'Deploy the Discount Function first: shopify app deploy (handle syspricing-discount)',
-      };
-    }
-
-    const input = {
+    const baseInput = {
       title: DISCOUNT_TITLE,
-      functionId,
       startsAt: new Date().toISOString(),
       discountClasses: ['PRODUCT'],
       combinesWith: {
@@ -72,45 +63,67 @@ function createDiscountSetup({ functionHandle = FUNCTION_HANDLE } = {}) {
       ],
     };
 
-    const created = await client.request(
-      `#graphql
-      mutation CreateSyspricingDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
-        discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
-          automaticAppDiscount {
-            discountId
-            title
-            status
-          }
-          userErrors { field message code }
-        }
-      }`,
-      { variables: { automaticAppDiscount: input } }
-    );
-
-    const payload = created.data?.discountAutomaticAppCreate;
-    const errors = payload?.userErrors || [];
-    if (errors.length) {
-      const msg = errors.map((e) => e.message).join('; ');
-      console.warn('[discountSetup] create', msg);
-      return {
-        ok: false,
-        reason: 'CREATE_FAILED',
-        errors,
-        hint:
-          /function|handle|id/i.test(msg)
-            ? 'Deploy the Discount Function first: shopify app deploy'
-            : msg,
-      };
+    // 2025-10: functionHandle is current; functionId is deprecated UUID.
+    const attempts = [{ ...baseInput, functionHandle }];
+    if (functionId) {
+      attempts.push({ ...baseInput, functionId: toFunctionId(functionId) });
     }
 
-    const discountId = payload?.automaticAppDiscount?.discountId;
+    let lastErrors = [];
+    for (const automaticAppDiscount of attempts) {
+      try {
+        const created = await client.request(
+          `#graphql
+          mutation CreateSyspricingDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
+            discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+              automaticAppDiscount {
+                discountId
+                title
+                status
+              }
+              userErrors { field message code }
+            }
+          }`,
+          { variables: { automaticAppDiscount } }
+        );
+
+        const gqlErrors = created.errors || created.data?.errors || [];
+        const payload = created.data?.discountAutomaticAppCreate;
+        const errors = payload?.userErrors || [];
+        if (!errors.length && payload?.automaticAppDiscount?.discountId) {
+          return {
+            ok: true,
+            created: true,
+            discountId: payload.automaticAppDiscount.discountId,
+            status: payload.automaticAppDiscount.status,
+            tags,
+            functionId: functionId || null,
+            functionHandle,
+          };
+        }
+        lastErrors = errors.length
+          ? errors
+          : gqlErrors.length
+            ? gqlErrors.map((e) => ({ message: e.message || String(e) }))
+            : [{ message: 'empty discountAutomaticAppCreate response' }];
+        console.warn('[discountSetup] create', lastErrors.map((e) => e.message).join('; '));
+      } catch (err) {
+        lastErrors = [{ message: err && err.message ? err.message : String(err) }];
+        console.warn('[discountSetup] create', lastErrors[0].message);
+      }
+    }
+
+    const msg = lastErrors.map((e) => e.message).join('; ') || 'NO_FUNCTION';
+    const plusBlocked = /Plus plan/i.test(msg);
     return {
-      ok: true,
-      created: true,
-      discountId,
-      status: payload?.automaticAppDiscount?.status,
-      tags,
-      functionId: functionId || null,
+      ok: false,
+      reason: plusBlocked ? 'PLUS_REQUIRED' : functionId ? 'CREATE_FAILED' : 'NO_FUNCTION',
+      errors: lastErrors,
+      hint: plusBlocked
+        ? 'Shopify bloquea Discount Functions en apps custom si la tienda no es Plus. Opciones: (1) pasar syspricing-somosface a distribución pública unlisted, o (2) subir SomosFace a Shopify Plus. El deploy de la Function ya está hecho.'
+        : /function|handle|id/i.test(msg) || !functionId
+          ? 'Deploy the Discount Function first: shopify app deploy (handle syspricing-discount)'
+          : msg,
     };
   }
 
@@ -209,9 +222,9 @@ async function resolveFunctionId(client, handle) {
       shopifyFunctions(first: 50) {
         nodes {
           id
+          handle
           title
           apiType
-          app { title }
         }
       }
     }`
@@ -222,12 +235,20 @@ async function resolveFunctionId(client, handle) {
   if (!nodes.length) return null;
 
   const lowerHandle = String(handle || '').toLowerCase();
-  const byTitle =
+  const match =
+    nodes.find((n) => String(n.handle || '').toLowerCase() === lowerHandle) ||
     nodes.find((n) => String(n.title || '').toLowerCase().includes('syspricing')) ||
     nodes.find((n) => String(n.title || '').toLowerCase().includes(lowerHandle)) ||
     nodes.find((n) => /discount/i.test(String(n.apiType || '')) && /syspricing|b2b/i.test(String(n.title || '')));
 
-  return byTitle?.id || null;
+  return match?.id || null;
+}
+
+function toFunctionId(id) {
+  const s = String(id || '');
+  if (!s) return s;
+  if (s.includes('/')) return s.split('/').pop();
+  return s;
 }
 
 async function setDiscountConfigMetafield(client, ownerId, value) {

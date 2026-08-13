@@ -65,6 +65,13 @@
   color: #111111;
   font-weight: 700;
 }
+.syspricing-cart-price .syspricing-cart-price {
+  display: contents;
+}
+#CartTotal .syspricing-cart-price,
+#AjaxCartSubtotal .syspricing-cart-price {
+  display: inline-flex;
+}
 @media (max-width: 560px) {
   .syspricing-b2b-price {
     font-size: 1.05rem;

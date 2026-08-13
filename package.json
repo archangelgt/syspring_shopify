@@ -22,6 +22,6 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@shopify/cli": "^3.84.1"
+    "@shopify/cli": "3.92.1"
   }
 }

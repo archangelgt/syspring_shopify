@@ -312,6 +312,9 @@
 
   function paintMoneyNode(el, catalogMajor, b2bMajor, currency) {
     if (!el || el.getAttribute('data-syspricing-cart-painted') === '1') return;
+    if (el.closest && el.closest('.syspricing-cart-price, .syspricing-card-price, .syspricing-b2b-price')) {
+      return;
+    }
     var catalogText = formatMoney(catalogMajor, currency);
     var b2bText = formatMoney(b2bMajor, currency);
     if (catalogText === b2bText) return;
@@ -323,6 +326,25 @@
       '</span> <span class="syspricing-amount">' +
       b2bText +
       '</span>';
+  }
+
+  function paintCartTotalElement(el, catalogMajor, b2bMajor, currency) {
+    if (!el) return;
+    if (el.getAttribute('data-syspricing-cart-painted') === '1') return;
+    if (el.querySelector && el.querySelector('.syspricing-cart-price')) {
+      el.setAttribute('data-syspricing-cart-painted', '1');
+      return;
+    }
+    var catalogText = formatMoney(catalogMajor, currency);
+    var b2bText = formatMoney(b2bMajor, currency);
+    if (catalogText === b2bText) return;
+    el.setAttribute('data-syspricing-cart-painted', '1');
+    el.innerHTML =
+      'Total: <span class="syspricing-cart-price"><span class="syspricing-compare">' +
+      catalogText +
+      '</span> <span class="syspricing-amount">' +
+      b2bText +
+      '</span></span>';
   }
 
   function findItemRoots(cartRoot, item) {
@@ -363,6 +385,11 @@
 
   function findCartRoots() {
     var sels = [
+      '[data-js-site-cart-sidebar]',
+      '#AjaxCartSubtotal',
+      '#AjaxCartForm',
+      '#CartTotal',
+      'cart-form',
       'cart-drawer',
       '#CartDrawer',
       '#cart-drawer',
@@ -373,7 +400,6 @@
       '.sidebar-cart',
       '#sidebar-cart',
       '.drawer--cart',
-      '[data-ajax-cart]',
       'form[action="/cart"]',
       'form[action$="/cart"]',
       '.cart-items',
@@ -384,10 +410,10 @@
       '.js-cart',
     ];
     var roots = [];
-    var seen = {};
+    var seen = [];
     function add(el) {
-      if (!el || seen[el]) return;
-      seen[el] = true;
+      if (!el || seen.indexOf(el) !== -1) return;
+      seen.push(el);
       roots.push(el);
     }
     for (var i = 0; i < sels.length; i++) {
@@ -427,7 +453,11 @@
 
       for (var r = 0; r < roots.length; r++) {
         var itemRoots = findItemRoots(roots[r], item);
-        if (!itemRoots.length) itemRoots = [roots[r]];
+        if (!itemRoots.length) {
+          var rid = roots[r].id || '';
+          if (rid === 'AjaxCartSubtotal' || rid === 'CartTotal') continue;
+          itemRoots = [roots[r]];
+        }
         for (var ir = 0; ir < itemRoots.length; ir++) {
           var unitNodes = leafMoneyNodes(itemRoots[ir], catalogUnit, currency);
           for (var u = 0; u < unitNodes.length; u++) {
@@ -446,16 +476,16 @@
     }
 
     if (b2bSubtotal < catalogSubtotal) {
-      for (var t = 0; t < roots.length; t++) {
-        var totalNodes = leafMoneyNodes(roots[t], catalogSubtotal, currency);
-        for (var tn = 0; tn < totalNodes.length; tn++) {
-          paintMoneyNode(totalNodes[tn], catalogSubtotal, b2bSubtotal, currency);
-        }
-        var cartTotal = Number(cart.total_price) / 100;
-        if (cartTotal && Math.abs(cartTotal - catalogSubtotal) > 0.009) {
-          var cartTotalNodes = leafMoneyNodes(roots[t], cartTotal, currency);
-          for (var ct = 0; ct < cartTotalNodes.length; ct++) {
-            paintMoneyNode(cartTotalNodes[ct], cartTotal, b2bSubtotal, currency);
+      var cartTotalEl = document.getElementById('CartTotal');
+      if (cartTotalEl) {
+        paintCartTotalElement(cartTotalEl, catalogSubtotal, b2bSubtotal, currency);
+      } else {
+        var subtotalRoot = document.getElementById('AjaxCartSubtotal');
+        var totalRoots = subtotalRoot ? [subtotalRoot] : roots;
+        for (var t = 0; t < totalRoots.length; t++) {
+          var totalNodes = leafMoneyNodes(totalRoots[t], catalogSubtotal, currency);
+          for (var tn = 0; tn < totalNodes.length; tn++) {
+            paintMoneyNode(totalNodes[tn], catalogSubtotal, b2bSubtotal, currency);
           }
         }
       }
@@ -464,7 +494,9 @@
 
   var cartPaintTimer = null;
   var cartPaintInFlight = false;
+  var suppressCartObs = false;
   function scheduleCartPaint() {
+    if (suppressCartObs) return;
     clearTimeout(cartPaintTimer);
     cartPaintTimer = setTimeout(paintCartFromApi, 80);
   }
@@ -498,7 +530,14 @@
             return r.json();
           })
           .then(function (body) {
-            paintCart(cart, (body && body.data && body.data.prices) || {}, currency);
+            suppressCartObs = true;
+            try {
+              paintCart(cart, (body && body.data && body.data.prices) || {}, currency);
+            } finally {
+              setTimeout(function () {
+                suppressCartObs = false;
+              }, 400);
+            }
           });
       })
       .catch(function () {})
@@ -544,6 +583,131 @@
     document.addEventListener('cart:updated', scheduleCartPaint);
     document.addEventListener('cart:refresh', scheduleCartPaint);
     document.addEventListener('theme:cart:change', scheduleCartPaint);
+    document.addEventListener('cart-updated', scheduleCartPaint, true);
+  }
+
+  var checkoutInFlight = false;
+
+  function checkoutDiscountUrl(pricesProxy) {
+    return String(pricesProxy || '/apps/syspricing/prices').replace(/\/prices\/?$/, '/checkout-discount');
+  }
+
+  function goToCheckout(code) {
+    if (code) {
+      window.location.href =
+        '/discount/' + encodeURIComponent(code) + '?redirect=' + encodeURIComponent('/checkout');
+      return;
+    }
+    window.location.href = '/checkout';
+  }
+
+  function requestCheckoutCode(cart, boot) {
+    var tags = boot.getAttribute('data-customer-tags') || '';
+    var proxy = checkoutDiscountUrl(boot.getAttribute('data-proxy') || '/apps/syspricing/prices');
+    var lines = (cart.items || [])
+      .map(function (it) {
+        return String(it.variant_id) + ':' + String(it.quantity || 1);
+      })
+      .join(',');
+    var params = new URLSearchParams();
+    params.set('lines', lines);
+    if (tags) params.set('tags', tags);
+    var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
+    return fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (body) {
+        var data = (body && body.data) || {};
+        if (data.ok && data.code) return data.code;
+        return null;
+      });
+  }
+
+  function proceedToB2bCheckout(e) {
+    var boot = getCartBoot();
+    if (!boot || boot.getAttribute('data-logged-in') !== '1') return false;
+    if (checkoutInFlight) {
+      e.preventDefault();
+      e.stopPropagation();
+      return true;
+    }
+    checkoutInFlight = true;
+    e.preventDefault();
+    e.stopPropagation();
+    var done = false;
+    function finish(code) {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      goToCheckout(code);
+    }
+    var timeout = setTimeout(function () {
+      finish(null);
+    }, 12000);
+    fetch('/cart.js', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (cart) {
+        if (!cart || !cart.items || !cart.items.length) {
+          finish(null);
+          return;
+        }
+        return requestCheckoutCode(cart, boot).then(function (code) {
+          finish(code);
+        });
+      })
+      .catch(function () {
+        finish(null);
+      });
+    return true;
+  }
+
+  function isCheckoutClickTarget(el) {
+    if (!el || !el.closest) return false;
+    if (el.closest('a[href*="/checkout"], [formaction*="/checkout"]')) return true;
+    if (el.closest('button[name="checkout"], input[name="checkout"]')) return true;
+    var btn = el.closest('button, input[type="submit"], a');
+    if (!btn) return false;
+    var label = String(btn.textContent || btn.value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (
+      /^(check\s*out|pagar|finalizar compra|ir a caja|proceder al pago)$/.test(label) ||
+      /finalizar compra|ir a checkout|proceed to checkout/.test(label)
+    ) {
+      if (btn.closest('form[action*="/cart"], cart-drawer, .cart-drawer, #CartDrawer, .ajax-cart, [id*="cart"], [class*="cart"]')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function watchCheckout() {
+    if (window.__SYSPRICING_CHECKOUT_WATCH) return;
+    window.__SYSPRICING_CHECKOUT_WATCH = true;
+    document.addEventListener(
+      'click',
+      function (e) {
+        if (e.button && e.button !== 0) return;
+        if (!isCheckoutClickTarget(e.target)) return;
+        proceedToB2bCheckout(e);
+      },
+      true
+    );
+    document.addEventListener(
+      'submit',
+      function (e) {
+        var submitter = e.submitter;
+        var checkoutSubmit =
+          submitter &&
+          (submitter.name === 'checkout' ||
+            /checkout/i.test(submitter.getAttribute('formaction') || '') ||
+            /checkout/i.test(submitter.getAttribute('href') || ''));
+        if (!checkoutSubmit) return;
+        proceedToB2bCheckout(e);
+      },
+      true
+    );
   }
 
   function init() {
@@ -551,6 +715,7 @@
     for (var i = 0; i < nodes.length; i++) boot(nodes[i]);
     fetchGridPrices();
     watchCartNetwork();
+    watchCheckout();
     paintCartFromApi();
     setTimeout(paintCartFromApi, 400);
     setTimeout(paintCartFromApi, 1200);
@@ -571,14 +736,16 @@
       t = setTimeout(fetchGridPrices, 120);
     }).observe(grid, { childList: true, subtree: true });
   }
-  if (window.MutationObserver) {
+  if (window.MutationObserver && !window.__SYSPRICING_CART_OBS) {
+    window.__SYSPRICING_CART_OBS = true;
     var cartObsT = null;
     new MutationObserver(function (mutations) {
+      if (suppressCartObs) return;
       var relevant = false;
       for (var i = 0; i < mutations.length; i++) {
         var m = mutations[i];
         var t = m.target;
-        if (t && t.closest && t.closest('.syspricing-cart-price, .syspricing-card-price, .syspricing-b2b-price')) {
+        if (t && t.closest && t.closest('.syspricing-cart-price, .syspricing-card-price, .syspricing-b2b-price, #CartTotal')) {
           continue;
         }
         relevant = true;

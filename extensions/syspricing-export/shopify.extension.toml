@@ -9,7 +9,3 @@ type = "ui_extension"
 [[extensions.targeting]]
 module = "./src/ExportAction.jsx"
 target = "admin.product-index.selection-action.render"
-
-[[extensions.targeting]]
-module = "./src/CollectionExportAction.jsx"
-target = "admin.collection-details.action.render"

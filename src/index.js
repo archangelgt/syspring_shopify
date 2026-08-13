@@ -103,7 +103,7 @@ async function bootstrap() {
     productsAdmin,
   });
 
-  return { db, useCases, customersAdmin, metafieldSync, discountSetup };
+  return { db, useCases, customersAdmin, metafieldSync, discountSetup, getAdminClient };
 }
 
 function setEmbeddedCsp(res, shop) {
@@ -295,7 +295,7 @@ async function requireShop(req, res, next) {
 }
 
 bootstrap()
-  .then(({ useCases, customersAdmin, metafieldSync, discountSetup }) => {
+  .then(({ useCases, customersAdmin, metafieldSync, discountSetup, getAdminClient }) => {
     const app = express();
     // Apache terminates TLS and proxies HTTP → Node. Required for Secure OAuth cookies.
     app.set('trust proxy', 1);
@@ -443,6 +443,7 @@ bootstrap()
       createProxyRouter({
         useCases,
         customersAdmin,
+        getAdminClient,
         apiSecret: process.env.SHOPIFY_API_SECRET,
       })
     );

@@ -260,7 +260,7 @@ function createApiRouter({
       }
 
       let discount = functionConfig?.discount || null;
-      if (!discount && discountSetup?.ensureAutomaticDiscount) {
+      if ((!discount || discount.ok === false) && discountSetup?.ensureAutomaticDiscount) {
         const tags = functionConfig?.tags || [];
         const lists = useCases.priceLists
           ? useCases.priceLists.list(req.shop).filter((pl) => pl.status === 'active')

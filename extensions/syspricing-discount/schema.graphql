@@ -1,0 +1,67 @@
+# Minimal local schema so Shopify CLI typegen can run.
+# Partners validates the real input queries on deploy.
+scalar Decimal
+
+type QueryRoot {
+  cart: Cart!
+  discount: Discount
+}
+
+schema {
+  query: QueryRoot
+}
+
+type Cart {
+  buyerIdentity: BuyerIdentity
+  lines: [CartLine!]!
+  deliveryGroups: [CartDeliveryGroup!]!
+}
+
+type BuyerIdentity {
+  customer: Customer
+}
+
+type Customer {
+  hasTags(tags: [String!]!): [HasTagResponse!]!
+}
+
+type HasTagResponse {
+  hasTag: Boolean!
+  tag: String!
+}
+
+type CartLine {
+  id: ID!
+  quantity: Int!
+  cost: CartLineCost!
+  merchandise: Merchandise!
+}
+
+type CartLineCost {
+  amountPerQuantity: MoneyV2!
+}
+
+type MoneyV2 {
+  amount: Decimal!
+  currencyCode: String!
+}
+
+union Merchandise = ProductVariant
+
+type ProductVariant {
+  id: ID!
+  metafield(namespace: String, key: String): Metafield
+}
+
+type Metafield {
+  value: String
+}
+
+type CartDeliveryGroup {
+  id: ID!
+}
+
+type Discount {
+  discountClasses: [String!]
+  metafield(namespace: String, key: String): Metafield
+}

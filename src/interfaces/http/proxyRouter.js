@@ -2,14 +2,45 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { createNativeCheckoutDiscount } = require('../../infrastructure/shopify/nativeCheckoutDiscount');
 
 /**
  * App Proxy — storefront B2B prices for logged-in customers.
  * Storefront calls: /apps/syspricing/prices?variant_ids=123,456
  * Shopify forwards to: /proxy/prices?...&shop=&logged_in_customer_id=&signature=
  */
-function createProxyRouter({ useCases, customersAdmin, apiSecret }) {
+function createProxyRouter({ useCases, customersAdmin, getAdminClient, apiSecret }) {
   const router = express.Router();
+  const nativeDiscount = createNativeCheckoutDiscount({ getAdminClient, useCases });
+
+  async function resolveProxyCustomer(req) {
+    const shop = String(req.query.shop || '')
+      .trim()
+      .toLowerCase();
+    const customerId = req.query.logged_in_customer_id
+      ? String(req.query.logged_in_customer_id).trim()
+      : '';
+    const tagsFromQuery = String(req.query.tags || '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    let tags = tagsFromQuery;
+    let customer = null;
+    let authSource = 'none';
+
+    if (customerId) {
+      customer = await customersAdmin.getById(shop, customerId);
+      if (customer) {
+        tags = customer.tags && customer.tags.length ? customer.tags : tagsFromQuery;
+        authSource = 'logged_in_customer_id';
+      }
+    } else if (tagsFromQuery.length) {
+      authSource = 'liquid_tags_fallback';
+    }
+
+    return { shop, customerId, tags, customer, authSource, tagsFromQuery };
+  }
 
   router.use((req, res, next) => {
     if (!verifyAppProxyHmac(req.query, apiSecret)) {
@@ -25,37 +56,12 @@ function createProxyRouter({ useCases, customersAdmin, apiSecret }) {
 
   router.get('/prices', async (req, res) => {
     try {
-      const shop = String(req.query.shop || '')
-        .trim()
-        .toLowerCase();
-      const customerId = req.query.logged_in_customer_id
-        ? String(req.query.logged_in_customer_id).trim()
-        : '';
-
-      // New Customer Accounts often omit logged_in_customer_id on App Proxy.
-      // Liquid can still see customer.tags — JS sends them as fallback (signed via proxy).
-      const tagsFromQuery = String(req.query.tags || '')
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
+      const { shop, customerId, tags, customer, authSource, tagsFromQuery } =
+        await resolveProxyCustomer(req);
 
       if (!shop) {
         res.status(400).json({ error: { code: 'SHOP_REQUIRED', message: 'shop required' } });
         return;
-      }
-
-      let tags = tagsFromQuery;
-      let customer = null;
-      let authSource = 'none';
-
-      if (customerId) {
-        customer = await customersAdmin.getById(shop, customerId);
-        if (customer) {
-          tags = customer.tags && customer.tags.length ? customer.tags : tagsFromQuery;
-          authSource = 'logged_in_customer_id';
-        }
-      } else if (tagsFromQuery.length) {
-        authSource = 'liquid_tags_fallback';
       }
 
       console.log('[proxy/prices]', {
@@ -119,6 +125,57 @@ function createProxyRouter({ useCases, customersAdmin, apiSecret }) {
       });
     } catch (err) {
       console.error('[proxy/prices]', err);
+      res.status(500).json({
+        error: { code: 'PROXY_ERROR', message: err.message || 'Proxy error' },
+      });
+    }
+  });
+
+  /**
+   * Native checkout discount (no Functions): one-time amount-off code for catalog − B2B.
+   * GET /apps/syspricing/checkout-discount?lines=VARIANT:QTY,...&tags=...
+   */
+  router.get('/checkout-discount', async (req, res) => {
+    try {
+      const { shop, customerId, tags, authSource } = await resolveProxyCustomer(req);
+      if (!shop) {
+        res.status(400).json({ error: { code: 'SHOP_REQUIRED', message: 'shop required' } });
+        return;
+      }
+      if (!tags.length) {
+        res.status(200).json({ data: { ok: true, skipped: true, reason: 'NO_TAGS', authSource } });
+        return;
+      }
+
+      const lines = String(req.query.lines || '')
+        .split(',')
+        .map((part) => {
+          const [id, qty] = String(part).split(':');
+          return { variantId: String(id || '').trim(), quantity: qty };
+        })
+        .filter((line) => line.variantId);
+
+      const result = await nativeDiscount.createForCart(shop, {
+        customerId,
+        tags,
+        lines,
+      });
+
+      console.log('[proxy/checkout-discount]', {
+        shop,
+        customerId: customerId || null,
+        authSource,
+        skipped: Boolean(result.skipped),
+        ok: result.ok,
+        amount: result.amount,
+        reason: result.reason || null,
+      });
+
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(result.ok ? 200 : 500).json({ data: result });
+    } catch (err) {
+      console.error('[proxy/checkout-discount]', err);
       res.status(500).json({
         error: { code: 'PROXY_ERROR', message: err.message || 'Proxy error' },
       });
