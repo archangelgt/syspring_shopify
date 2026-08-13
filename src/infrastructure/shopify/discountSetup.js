@@ -34,8 +34,17 @@ function createDiscountSetup({ functionHandle = FUNCTION_HANDLE } = {}) {
     }
 
     const functionId = await resolveFunctionId(client, functionHandle);
+    if (!functionId) {
+      return {
+        ok: false,
+        reason: 'NO_FUNCTION',
+        hint: 'Deploy the Discount Function first: shopify app deploy (handle syspricing-discount)',
+      };
+    }
+
     const input = {
       title: DISCOUNT_TITLE,
+      functionId,
       startsAt: new Date().toISOString(),
       discountClasses: ['PRODUCT'],
       combinesWith: {
@@ -52,12 +61,6 @@ function createDiscountSetup({ functionHandle = FUNCTION_HANDLE } = {}) {
         },
       ],
     };
-
-    if (functionId) {
-      input.functionId = functionId;
-    } else {
-      input.functionHandle = functionHandle;
-    }
 
     const created = await client.request(
       `#graphql
@@ -118,7 +121,6 @@ async function findSyspricingDiscount(client) {
               status
               appDiscountType {
                 functionId
-                functionHandle
               }
             }
           }
@@ -140,14 +142,14 @@ async function findSyspricingDiscount(client) {
       id: node.id,
       status: d.status,
       functionId: d.appDiscountType?.functionId,
-      functionHandle: d.appDiscountType?.functionHandle,
       metafield: node.metafield,
     };
   }
 
-  // Fallback: any automatic app discount from our function handle
-  const all = await client.request(
-    `#graphql
+  // Fallback: any automatic app discount titled SYSPRICING / from our app
+  const all = await client
+    .request(
+      `#graphql
     query ListAutomaticAppDiscounts {
       automaticDiscountNodes(first: 50) {
         nodes {
@@ -159,7 +161,6 @@ async function findSyspricingDiscount(client) {
               status
               appDiscountType {
                 functionId
-                functionHandle
               }
             }
           }
@@ -170,19 +171,18 @@ async function findSyspricingDiscount(client) {
         }
       }
     }`
-  ).catch(() => null);
+    )
+    .catch(() => null);
 
   const autoNodes = all?.data?.automaticDiscountNodes?.nodes || [];
   for (const node of autoNodes) {
     const d = node.automaticDiscount;
     if (!d || d.__typename !== 'DiscountAutomaticApp') continue;
-    const handle = d.appDiscountType?.functionHandle;
-    if (handle === FUNCTION_HANDLE || String(d.title || '') === DISCOUNT_TITLE) {
+    if (String(d.title || '') === DISCOUNT_TITLE || /syspricing/i.test(String(d.title || ''))) {
       return {
         id: node.id,
         status: d.status,
         functionId: d.appDiscountType?.functionId,
-        functionHandle: handle,
         metafield: node.metafield,
       };
     }
