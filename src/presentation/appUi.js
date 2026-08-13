@@ -311,8 +311,10 @@ function renderAppPage({ apiKey, shop, host, tab, appTitle, appSubtitle }) {
       setupBtn.onclick = function () {
         setupBtn.disabled = true;
         api('/storefront/setup', { method: 'POST', body: '{}' })
-          .then(function () {
-            flash('Tienda preparada. Activa el bloque de precio B2B en el editor del tema.', 'ok');
+          .then(function (res) {
+            var msg = (res && res.data && res.data.message) || 'Tienda preparada';
+            var warn = res && res.data && res.data.discount && res.data.discount.ok === false;
+            flash(msg, warn ? 'warn' : 'ok');
             markCheck('theme', true);
           })
           .catch(function (e) { flash(e.message, 'err'); })

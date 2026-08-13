@@ -9,6 +9,7 @@ function createMetafieldSync({
   priceListRepo,
   variantPriceRepo,
   ensureMetafieldDefinitions,
+  discountSetup,
 }) {
   async function syncPriceList(shop, priceListId) {
     const list = priceListRepo.getById(shop, priceListId);
@@ -119,6 +120,7 @@ function createMetafieldSync({
     lists.forEach((pl) => {
       priority[pl.tag] = pl.priority;
     });
+    const config = { tags, priority };
     const shopId = await getShopGid(admin);
     if (!shopId) return { ok: false };
     await admin.request(
@@ -136,13 +138,22 @@ function createMetafieldSync({
               namespace: 'syspricing',
               key: 'function-config',
               type: 'json',
-              value: JSON.stringify({ tags, priority }),
+              value: JSON.stringify(config),
             },
           ],
         },
       }
     );
-    return { ok: true, tags };
+
+    let discount = null;
+    if (discountSetup?.ensureAutomaticDiscount) {
+      discount = await discountSetup.ensureAutomaticDiscount(admin, config).catch((err) => {
+        console.warn('[metafieldSync] discount setup', err && err.message);
+        return { ok: false, reason: err && err.message };
+      });
+    }
+
+    return { ok: true, tags, discount };
   }
 
   return { syncPriceList, syncVariantIds, syncFunctionConfig };
@@ -152,6 +163,16 @@ function toVariantGid(id) {
   const s = String(id);
   if (s.startsWith('gid://')) return s;
   return `gid://shopify/ProductVariant/${s}`;
+}
+
+async function getShopGid(client) {
+  const res = await client.request(
+    `#graphql
+    query ShopGid {
+      shop { id }
+    }`
+  );
+  return res.data?.shop?.id || null;
 }
 
 module.exports = { createMetafieldSync, toVariantGid };

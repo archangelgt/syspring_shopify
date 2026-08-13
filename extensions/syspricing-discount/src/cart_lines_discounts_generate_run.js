@@ -1,10 +1,10 @@
 /**
- * SYSPRICING Discount Function — tag = Price List
+ * SYSPRICING Discount Function — customer tag = Price List.
  *
- * Input variables $tags come from discount metafield syspricing.function-config
- *   { "tags": ["DPAÑUELOS", "MPAÑUELOS", ...], "priority": { "DPAÑUELOS": 10 } }
+ * Input variable $tags comes from discount metafield syspricing.function-config
+ *   { "tags": ["distribuidor", ...], "priority": { "distribuidor": 10 } }
  *
- * Variant metafield syspricing.prices: { "DPAÑUELOS": "335.00", ... }
+ * Variant metafield syspricing.prices: { "distribuidor": "310.00", ... }
  */
 
 // @ts-check
@@ -17,14 +17,24 @@
  *     };
  *     lines: Array<{
  *       id: string;
+ *       quantity?: number;
  *       cost: { amountPerQuantity: { amount: string } };
- *       merchandise: { metafield?: { value?: string } };
+ *       merchandise: { __typename?: string; metafield?: { value?: string } };
  *     }>;
  *   };
- *   discount?: { metafield?: { value?: string } };
+ *   discount?: {
+ *     discountClasses?: string[];
+ *     metafield?: { value?: string };
+ *   };
  * }} input
  */
-export function run(input) {
+export function cartLinesDiscountsGenerateRun(input) {
+  const classes = input?.discount?.discountClasses || [];
+  const hasProduct = classes.includes('PRODUCT') || classes.includes('Product');
+  if (!hasProduct) {
+    return { operations: [] };
+  }
+
   const config = parseConfig(input?.discount?.metafield?.value);
   const matchedTags = (input?.cart?.buyerIdentity?.customer?.hasTags || [])
     .filter((t) => t.hasTag)
@@ -39,6 +49,9 @@ export function run(input) {
   const candidates = [];
 
   for (const line of input.cart.lines || []) {
+    if (line.merchandise?.__typename && line.merchandise.__typename !== 'ProductVariant') {
+      continue;
+    }
     const raw = line.merchandise?.metafield?.value;
     if (!raw) continue;
 
@@ -50,10 +63,12 @@ export function run(input) {
     }
 
     let target = null;
+    let matchedTag = null;
     for (const tag of matchedTags) {
       const v = Number(prices[tag]);
       if (Number.isFinite(v)) {
         target = v;
+        matchedTag = tag;
         break;
       }
     }
@@ -62,10 +77,16 @@ export function run(input) {
     const catalog = Number(line.cost?.amountPerQuantity?.amount);
     if (!Number.isFinite(catalog) || target >= catalog) continue;
 
+    const perUnit = catalog - target;
     candidates.push({
-      message: 'SYSPRICING B2B price',
+      message: matchedTag ? `SYSPRICING ${matchedTag}` : 'SYSPRICING B2B',
       targets: [{ cartLine: { id: line.id } }],
-      value: { fixedAmount: { amount: (catalog - target).toFixed(2) } },
+      value: {
+        fixedAmount: {
+          amount: perUnit.toFixed(2),
+          appliesToEachItem: true,
+        },
+      },
     });
   }
 
@@ -92,7 +113,8 @@ function parseConfig(raw) {
   try {
     const parsed = JSON.parse(raw);
     out.tags = Array.isArray(parsed.tags) ? parsed.tags.map(String) : [];
-    out.priority = parsed.priority && typeof parsed.priority === 'object' ? parsed.priority : {};
+    out.priority =
+      parsed.priority && typeof parsed.priority === 'object' ? parsed.priority : {};
   } catch {
     /* ignore */
   }

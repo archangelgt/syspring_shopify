@@ -3,7 +3,14 @@
 const express = require('express');
 const { DomainError } = require('../../domain/errors');
 
-function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafieldDefinitions }) {
+function createApiRouter({
+  useCases,
+  requireShop,
+  getAdminClient,
+  ensureMetafieldDefinitions,
+  metafieldSync,
+  discountSetup,
+}) {
   const router = express.Router();
   router.use(express.json({ limit: '20mb' }));
   router.use(requireShop);
@@ -245,17 +252,38 @@ function createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafiel
       }
       const client = await getAdminClient(req.shop);
       if (!client) throw new DomainError('No admin session', 'NO_SESSION', 401);
-      const data = await ensureMetafieldDefinitions(client);
-      if (useCases.priceLists) {
-        const lists = useCases.priceLists.list(req.shop).filter((pl) => pl.status === 'active');
-        for (const pl of lists) {
-          // trigger sync via prices use case path if metafieldSync attached — best-effort no-op here
-        }
+      const definitions = await ensureMetafieldDefinitions(client);
+
+      let functionConfig = null;
+      if (metafieldSync?.syncFunctionConfig) {
+        functionConfig = await metafieldSync.syncFunctionConfig(req.shop, client);
       }
+
+      let discount = functionConfig?.discount || null;
+      if (!discount && discountSetup?.ensureAutomaticDiscount) {
+        const tags = functionConfig?.tags || [];
+        const lists = useCases.priceLists
+          ? useCases.priceLists.list(req.shop).filter((pl) => pl.status === 'active')
+          : [];
+        const priority = {};
+        lists.forEach((pl) => {
+          priority[pl.tag] = pl.priority;
+        });
+        discount = await discountSetup.ensureAutomaticDiscount(client, {
+          tags: tags.length ? tags : lists.map((pl) => pl.tag),
+          priority,
+        });
+      }
+
       res.json({
         data: {
-          ...data,
-          message: 'Tienda preparada. Activa el bloque de precio B2B en el editor del tema.',
+          ...definitions,
+          functionConfig,
+          discount,
+          message: discount?.ok
+            ? 'Tienda preparada. Descuento automático B2B activo para carrito/checkout.'
+            : discount?.hint ||
+              'Tienda preparada. Si el carrito sigue con precio de catálogo: despliega la Function (shopify app deploy) y vuelve a pulsar Preparar tienda. Reautoriza scopes write_discounts si hace falta.',
         },
       });
     } catch (err) {

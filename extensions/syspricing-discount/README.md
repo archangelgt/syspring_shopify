@@ -1,25 +1,29 @@
 # SYSPRICING Discount Function (tag-driven)
 
-Customer **tags** = Price Lists.
+Customer **tags** = Price Lists. Applies absolute B2B prices in **cart / checkout**.
 
 ## Data
 
 | Source | Shape |
 |--------|--------|
-| Variant `syspricing.prices` | `{ "DPAÑUELOS": "335.00" }` |
-| Shop `syspricing.function-config` | `{ "tags": ["…"], "priority": { "DPAÑUELOS": 10 } }` |
-| Discount metafield (same JSON) | Wired as Function input variables `$tags` |
+| Variant `syspricing.prices` | `{ "distribuidor": "310.00" }` |
+| Shop `syspricing.function-config` | `{ "tags": ["…"], "priority": { … } }` |
+| Automatic discount metafield (same JSON) | Feeds Function input `$tags` |
 
 ## Behaviour
 
 1. `hasTags(tags: $tags)` → customer tags that match active price lists.
 2. Sort by priority from config.
-3. First matching key in variant prices → fixed discount vs catalog.
+3. First matching key in variant prices → fixed per-unit discount vs catalog (`appliesToEachItem`).
 
-## Deploy
-
-Copy shop `function-config` into the automatic discount metafield, then:
+## Deploy (required once per Partner app)
 
 ```bash
+cd extensions/syspricing-discount && npm install
+cd ../..
 shopify app deploy
 ```
+
+Then in the embedded app: **Preparar tienda** (creates automatic discount `SYSPRICING B2B` + syncs config).
+
+Re-open the app once so Shopify grants `read_discounts,write_discounts` if the install predates those scopes.

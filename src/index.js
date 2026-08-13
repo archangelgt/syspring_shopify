@@ -15,6 +15,7 @@ const { createApiRouter } = require('./interfaces/http/apiRouter');
 const { createCustomerApiRouter } = require('./interfaces/http/customerApiRouter');
 const { createProxyRouter } = require('./interfaces/http/proxyRouter');
 const { ensureMetafieldDefinitions } = require('./infrastructure/shopify/metafieldDefinitions');
+const { createDiscountSetup } = require('./infrastructure/shopify/discountSetup');
 const { createCustomersAdmin } = require('./infrastructure/shopify/customersAdmin');
 const { createProductsAdmin } = require('./infrastructure/shopify/productsAdmin');
 
@@ -25,7 +26,8 @@ const HOST = (process.env.HOST || process.env.SHOPIFY_APP_URL || 'https://app.ex
 );
 const APP_TITLE = process.env.APP_TITLE || 'SysPricing';
 const APP_SUBTITLE = process.env.APP_SUBTITLE || 'B2B Price Engine';
-const DEFAULT_SCOPES = 'read_products,write_products,read_customers,write_customers';
+const DEFAULT_SCOPES =
+  'read_products,write_products,read_customers,write_customers,read_discounts,write_discounts';
 const SCOPES = (process.env.SCOPES || DEFAULT_SCOPES)
   .split(',')
   .map((s) => s.trim())
@@ -85,11 +87,13 @@ async function bootstrap() {
   const customersAdmin = createCustomersAdmin({ getAdminClient });
   const productsAdmin = createProductsAdmin({ getAdminClient });
 
+  const discountSetup = createDiscountSetup();
   const metafieldSync = createMetafieldSync({
     getAdminClient,
     priceListRepo: repos.priceListRepo,
     variantPriceRepo: repos.variantPriceRepo,
     ensureMetafieldDefinitions,
+    discountSetup,
   });
 
   const useCases = createUseCases({
@@ -99,7 +103,7 @@ async function bootstrap() {
     productsAdmin,
   });
 
-  return { db, useCases, customersAdmin };
+  return { db, useCases, customersAdmin, metafieldSync, discountSetup };
 }
 
 function setEmbeddedCsp(res, shop) {
@@ -291,7 +295,7 @@ async function requireShop(req, res, next) {
 }
 
 bootstrap()
-  .then(({ useCases, customersAdmin }) => {
+  .then(({ useCases, customersAdmin, metafieldSync, discountSetup }) => {
     const app = express();
     // Apache terminates TLS and proxies HTTP → Node. Required for Secure OAuth cookies.
     app.set('trust proxy', 1);
@@ -453,7 +457,17 @@ bootstrap()
         },
       })
     );
-    app.use('/api/v1', createApiRouter({ useCases, requireShop, getAdminClient, ensureMetafieldDefinitions }));
+    app.use(
+      '/api/v1',
+      createApiRouter({
+        useCases,
+        requireShop,
+        getAdminClient,
+        ensureMetafieldDefinitions,
+        metafieldSync,
+        discountSetup,
+      })
+    );
 
     app.get(
       '/',

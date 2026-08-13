@@ -1,0 +1,14 @@
+{
+  "name": "syspricing-discount",
+  "version": "1.0.0",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "shopify": "npm exec -- shopify",
+    "typegen": "npm exec -- shopify app function typegen",
+    "build": "npm exec -- shopify app function build"
+  },
+  "dependencies": {
+    "@shopify/shopify_function": "2.0.0"
+  }
+}
