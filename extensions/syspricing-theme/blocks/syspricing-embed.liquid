@@ -11,13 +11,13 @@
     data-proxy="/apps/syspricing/prices"
     data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
   ></div>
+  <script src="{{ 'syspricing-price.js' | asset_url }}" defer></script>
 {% endif %}
 
 {% schema %}
 {
   "name": "SYSPRICING cart B2B",
   "target": "body",
-  "javascript": "syspricing-price.js",
   "stylesheet": "syspricing-price.css",
   "settings": []
 }

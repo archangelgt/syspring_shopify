@@ -20,6 +20,7 @@ description = "Applies absolute B2B prices from syspricing metafields by custome
   [extensions.build]
   command = ""
   path = "dist/function.wasm"
+  watch = ["./src/**/*.js"]
 
   [extensions.input.variables]
   namespace = "syspricing"

@@ -227,10 +227,8 @@ function CollectionExportExtension() {
         {status === 'ready' || status === 'empty' ? (
           <s-box padding="base" border="base" borderRadius="base">
             <s-text>
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 'min(40vh, 220px)', overflow: 'auto', WebkitOverflowScrolling: 'touch', fontSize: '0.8rem' }}>
-                {csv.slice(0, 5000)}
-                {csv.length > 5000 ? '\n…' : ''}
-              </pre>
+              {csv.slice(0, 1500)}
+              {csv.length > 1500 ? ' …' : ''}
             </s-text>
           </s-box>
         ) : null}
