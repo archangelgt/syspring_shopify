@@ -49,11 +49,21 @@
 .syspricing-grid-item {
   display: contents;
 }
-.syspricing-card-price {
+.syspricing-card-price,
+.syspricing-cart-price {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.2rem 0.4rem;
+}
+.syspricing-cart-price .syspricing-compare {
+  text-decoration: line-through;
+  color: #d72c0d;
+  font-weight: 500;
+}
+.syspricing-cart-price .syspricing-amount {
+  color: #111111;
+  font-weight: 700;
 }
 @media (max-width: 560px) {
   .syspricing-b2b-price {

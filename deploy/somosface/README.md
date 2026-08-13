@@ -61,6 +61,15 @@ curl -sS https://syspricing.shopify.somosface.erpsys.pro/health
 # Instalar con el install link de Custom distribution (no el OAuth genérico de la app Seraph).
 ```
 
+## 6. Precio B2B en carrito / checkout
+
+El grid de colección ya muestra B2B. Para que **carrito y checkout** cobren lo mismo:
+
+1. `shopify app deploy` (Discount Function `syspricing-discount`).
+2. En la app: **Preparar tienda** (descuento automático `SYSPRICING B2B`).
+3. En el tema, pegar `theme/snippets/syspricing-cart-boot.liquid` en `layout/theme.liquid` antes de `</body>` (o activar el App embed **SYSPRICING cart B2B**).
+4. Subir `theme/sections/main-collection-product-grid.liquid` si aún apunta a `syspricing-price.js?v=9`.
+
 ## No mezclar
 
 | Instancia | Puerto | Contenedor | Volumen |

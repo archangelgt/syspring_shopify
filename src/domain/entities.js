@@ -13,6 +13,31 @@ function normalizeTag(tag) {
     .toLowerCase();
 }
 
+/** Casings Shopify hasTags may need — matching is case-sensitive. */
+function tagCaseVariants(tag) {
+  const raw = String(tag || '').trim();
+  if (!raw) return [];
+  const collapsed = raw.replace(/\s+/g, '');
+  const lower = collapsed.toLowerCase();
+  const upper = collapsed.toUpperCase();
+  const cap = lower ? lower.charAt(0).toUpperCase() + lower.slice(1) : '';
+  return [...new Set([raw, collapsed, lower, upper, cap].filter(Boolean))];
+}
+
+function expandTagsForHasTags(tags) {
+  const out = [];
+  const seen = new Set();
+  for (const t of tags || []) {
+    for (const v of tagCaseVariants(t)) {
+      if (!seen.has(v)) {
+        seen.add(v);
+        out.push(v);
+      }
+    }
+  }
+  return out;
+}
+
 function createPriceList({
   id,
   shop,
@@ -156,6 +181,8 @@ module.exports = {
   createActivityLog,
   normalizeMoney,
   normalizeTag,
+  tagCaseVariants,
+  expandTagsForHasTags,
   resolveVariantPrice,
   discountPercent,
   nowIso,

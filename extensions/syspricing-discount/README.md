@@ -13,8 +13,9 @@ Customer **tags** = Price Lists. Applies absolute B2B prices in **cart / checkou
 ## Behaviour
 
 1. `hasTags(tags: $tags)` → customer tags that match active price lists.
-2. Sort by priority from config.
-3. First matching key in variant prices → fixed per-unit discount vs catalog (`appliesToEachItem`).
+   `$tags` includes case variants (`distribuidor` / `Distribuidor` / `DISTRIBUIDOR`) because Shopify `hasTags` is case-sensitive.
+2. Sort by priority from config (case-insensitive).
+3. First matching key in variant prices (case-insensitive) → fixed per-unit discount vs catalog (`appliesToEachItem`).
 
 ## Deploy (required once per Partner app)
 

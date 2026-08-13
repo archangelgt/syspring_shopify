@@ -1,5 +1,7 @@
 'use strict';
 
+const { expandTagsForHasTags } = require('../../domain/entities');
+
 /**
  * Projects tag prices into Shopify variant metafields for Functions.
  * Also builds function-config JSON: { tags, priority } for hasTags($tags).
@@ -82,7 +84,7 @@ function createMetafieldSync({
     const chunkSize = 25;
     for (let i = 0; i < entries.length; i += chunkSize) {
       const chunk = entries.slice(i, i + chunkSize);
-      await client.request(
+      const res = await client.request(
         `#graphql
         mutation SetVariantPrices($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
@@ -101,6 +103,13 @@ function createMetafieldSync({
           },
         }
       );
+      const errors = res.data?.metafieldsSet?.userErrors || [];
+      if (errors.length) {
+        console.warn(
+          '[metafieldSync] prices',
+          errors.map((e) => e.message).join('; ')
+        );
+      }
       synced += chunk.length;
     }
 
@@ -115,10 +124,13 @@ function createMetafieldSync({
     const admin = client || (await getAdminClient(shop));
     if (!admin) return { ok: false };
     const lists = priceListRepo.list(shop).filter((pl) => pl.status === 'active');
-    const tags = lists.map((pl) => pl.tag);
+    const tags = expandTagsForHasTags(lists.map((pl) => pl.tag));
     const priority = {};
     lists.forEach((pl) => {
       priority[pl.tag] = pl.priority;
+      for (const v of expandTagsForHasTags([pl.tag])) {
+        priority[v] = pl.priority;
+      }
     });
     const config = { tags, priority };
     const shopId = await getShopGid(admin);

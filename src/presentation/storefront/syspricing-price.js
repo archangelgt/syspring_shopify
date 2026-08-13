@@ -1,8 +1,11 @@
 /**
  * SYSPRICING storefront — catalog (line-through) + B2B side by side.
  * PDP: .syspricing-b2b-price | Collection: .syspricing-grid-item (+ proxy batch)
+ * Cart drawer / cart page: rewrite catalog amounts to B2B.
  */
 (function () {
+  if (window.__SYSPRICING_PRICE_BOOTED) return;
+  window.__SYSPRICING_PRICE_BOOTED = true;
   function formatMoney(price, currency) {
     var n = Number(price);
     if (!Number.isFinite(n)) return String(price);
@@ -264,10 +267,293 @@
     });
   }
 
+  function getCartBoot() {
+    return (
+      document.getElementById('syspricing-cart-boot') ||
+      document.getElementById('syspricing-collection-boot') ||
+      document.querySelector('#syspricing-b2b-price[data-logged-in="1"], .syspricing-b2b-price[data-logged-in="1"]')
+    );
+  }
+
+  function moneyTextVariants(major, currency) {
+    var n = Number(major);
+    if (!Number.isFinite(n)) return [];
+    var formatted = formatMoney(n, currency);
+    var two = n.toFixed(2);
+    var whole = String(Math.round(n));
+    var twoComma = two.replace('.', ',');
+    var out = [formatted, 'Q' + two, 'Q' + whole, 'Q' + twoComma, two, whole];
+    if (String(currency || '').toUpperCase() === 'GTQ') {
+      out.push('Q ' + two, 'Q ' + whole);
+    }
+    return out.filter(function (t, i, arr) {
+      return t && arr.indexOf(t) === i;
+    });
+  }
+
+  function leafMoneyNodes(root, major, currency) {
+    if (!root) return [];
+    var texts = moneyTextVariants(major, currency);
+    var set = {};
+    for (var i = 0; i < texts.length; i++) set[texts[i]] = true;
+    var nodes = root.querySelectorAll('span, div, p, b, strong, td, em, small, a');
+    var hits = [];
+    for (var j = 0; j < nodes.length; j++) {
+      var el = nodes[j];
+      if (el.closest && el.closest('.syspricing-card-price, .syspricing-b2b-price, .syspricing-cart-price')) {
+        continue;
+      }
+      if (el.children && el.children.length) continue;
+      var t = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (set[t]) hits.push(el);
+    }
+    return hits;
+  }
+
+  function paintMoneyNode(el, catalogMajor, b2bMajor, currency) {
+    if (!el || el.getAttribute('data-syspricing-cart-painted') === '1') return;
+    var catalogText = formatMoney(catalogMajor, currency);
+    var b2bText = formatMoney(b2bMajor, currency);
+    if (catalogText === b2bText) return;
+    el.setAttribute('data-syspricing-cart-painted', '1');
+    el.classList.add('syspricing-cart-price');
+    el.innerHTML =
+      '<span class="syspricing-compare">' +
+      catalogText +
+      '</span> <span class="syspricing-amount">' +
+      b2bText +
+      '</span>';
+  }
+
+  function findItemRoots(cartRoot, item) {
+    var roots = [];
+    var vid = String(item.variant_id || '');
+    var handle = item.handle || '';
+    var title = String(item.product_title || item.title || '').trim();
+    var sels = [];
+    if (vid) {
+      sels.push('[data-variant-id="' + vid + '"]');
+      sels.push('[data-id="' + vid + '"]');
+      sels.push('[data-variant="' + vid + '"]');
+    }
+    if (item.key) {
+      sels.push('[data-line="' + item.key + '"]');
+      sels.push('[data-key="' + item.key + '"]');
+    }
+    for (var i = 0; i < sels.length; i++) {
+      var found = cartRoot.querySelectorAll(sels[i]);
+      for (var j = 0; j < found.length; j++) roots.push(found[j]);
+    }
+    if (!roots.length && handle) {
+      var links = cartRoot.querySelectorAll('a[href*="/products/' + handle + '"]');
+      for (var k = 0; k < links.length; k++) {
+        var row = links[k].closest('tr, li, .cart-item, .ajax-cart__product, [class*="cart-item"], [class*="cart__item"]');
+        if (row) roots.push(row);
+      }
+    }
+    if (!roots.length && title) {
+      var candidates = cartRoot.querySelectorAll('tr, li, article, [class*="cart-item"], [class*="cart__item"], [class*="ajax-cart"]');
+      for (var m = 0; m < candidates.length; m++) {
+        var txt = String(candidates[m].textContent || '');
+        if (txt.indexOf(title) !== -1) roots.push(candidates[m]);
+      }
+    }
+    return roots;
+  }
+
+  function findCartRoots() {
+    var sels = [
+      'cart-drawer',
+      '#CartDrawer',
+      '#cart-drawer',
+      '.cart-drawer',
+      '[data-cart-drawer]',
+      '.ajax-cart',
+      '.mini-cart',
+      '.sidebar-cart',
+      '#sidebar-cart',
+      '.drawer--cart',
+      '[data-ajax-cart]',
+      'form[action="/cart"]',
+      'form[action$="/cart"]',
+      '.cart-items',
+      '#CartItems',
+      '.cart__items',
+      '.cart-overlay',
+      '#Cart',
+      '.js-cart',
+    ];
+    var roots = [];
+    var seen = {};
+    function add(el) {
+      if (!el || seen[el]) return;
+      seen[el] = true;
+      roots.push(el);
+    }
+    for (var i = 0; i < sels.length; i++) {
+      var list = document.querySelectorAll(sels[i]);
+      for (var j = 0; j < list.length; j++) add(list[j]);
+    }
+    var labeled = document.querySelectorAll('aside, drawer, [class*="drawer"], [class*="sidebar"], [id*="cart"], [class*="cart"]');
+    for (var k = 0; k < labeled.length; k++) {
+      var t = String(labeled[k].textContent || '');
+      if (/producto en tu carrito|item[s]?\s+in\s+(your\s+)?cart/i.test(t)) add(labeled[k]);
+    }
+    return roots;
+  }
+
+  function paintCart(cart, priceMap, currency) {
+    if (!cart || !cart.items || !cart.items.length) return;
+    var roots = findCartRoots();
+    if (!roots.length) roots = [document.body];
+
+    var b2bSubtotal = 0;
+    var catalogSubtotal = 0;
+
+    for (var i = 0; i < cart.items.length; i++) {
+      var item = cart.items[i];
+      var qty = Math.max(1, Number(item.quantity) || 1);
+      var catalogUnit = Number(item.original_price != null ? item.original_price : item.price) / 100;
+      var info = pickPrice(priceMap, item.variant_id);
+      var b2bUnit =
+        info && info.price != null
+          ? Number(info.price)
+          : item.final_price != null && Number(item.final_price) < Number(item.price)
+            ? Number(item.final_price) / 100
+            : catalogUnit;
+      catalogSubtotal += catalogUnit * qty;
+      b2bSubtotal += b2bUnit * qty;
+      if (!Number.isFinite(b2bUnit) || b2bUnit >= catalogUnit) continue;
+
+      for (var r = 0; r < roots.length; r++) {
+        var itemRoots = findItemRoots(roots[r], item);
+        if (!itemRoots.length) itemRoots = [roots[r]];
+        for (var ir = 0; ir < itemRoots.length; ir++) {
+          var unitNodes = leafMoneyNodes(itemRoots[ir], catalogUnit, currency);
+          for (var u = 0; u < unitNodes.length; u++) {
+            paintMoneyNode(unitNodes[u], catalogUnit, b2bUnit, currency);
+          }
+          var lineCatalog = catalogUnit * qty;
+          var lineB2b = b2bUnit * qty;
+          if (qty > 1 || lineCatalog !== catalogUnit) {
+            var lineNodes = leafMoneyNodes(itemRoots[ir], lineCatalog, currency);
+            for (var ln = 0; ln < lineNodes.length; ln++) {
+              paintMoneyNode(lineNodes[ln], lineCatalog, lineB2b, currency);
+            }
+          }
+        }
+      }
+    }
+
+    if (b2bSubtotal < catalogSubtotal) {
+      for (var t = 0; t < roots.length; t++) {
+        var totalNodes = leafMoneyNodes(roots[t], catalogSubtotal, currency);
+        for (var tn = 0; tn < totalNodes.length; tn++) {
+          paintMoneyNode(totalNodes[tn], catalogSubtotal, b2bSubtotal, currency);
+        }
+        var cartTotal = Number(cart.total_price) / 100;
+        if (cartTotal && Math.abs(cartTotal - catalogSubtotal) > 0.009) {
+          var cartTotalNodes = leafMoneyNodes(roots[t], cartTotal, currency);
+          for (var ct = 0; ct < cartTotalNodes.length; ct++) {
+            paintMoneyNode(cartTotalNodes[ct], cartTotal, b2bSubtotal, currency);
+          }
+        }
+      }
+    }
+  }
+
+  var cartPaintTimer = null;
+  var cartPaintInFlight = false;
+  function scheduleCartPaint() {
+    clearTimeout(cartPaintTimer);
+    cartPaintTimer = setTimeout(paintCartFromApi, 80);
+  }
+
+  function paintCartFromApi() {
+    var boot = getCartBoot();
+    if (!boot || boot.getAttribute('data-logged-in') !== '1') return;
+    if (cartPaintInFlight) return;
+    var tags = boot.getAttribute('data-customer-tags') || '';
+    var proxy = boot.getAttribute('data-proxy') || '/apps/syspricing/prices';
+    var currency = boot.getAttribute('data-currency') || 'GTQ';
+    cartPaintInFlight = true;
+
+    fetch('/cart.js', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('cart');
+        return r.json();
+      })
+      .then(function (cart) {
+        var ids = (cart.items || []).map(function (it) {
+          return it.variant_id;
+        }).filter(Boolean);
+        if (!ids.length) return null;
+        var params = new URLSearchParams();
+        params.set('variant_ids', ids.join(','));
+        if (tags) params.set('tags', tags);
+        var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
+        return fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+          .then(function (r) {
+            if (!r.ok) throw new Error('proxy');
+            return r.json();
+          })
+          .then(function (body) {
+            paintCart(cart, (body && body.data && body.data.prices) || {}, currency);
+          });
+      })
+      .catch(function () {})
+      .then(function () {
+        cartPaintInFlight = false;
+      });
+  }
+
+  function isCartMutationUrl(url) {
+    return /\/cart\/(add|change|update|clear)/.test(String(url || ''));
+  }
+
+  function watchCartNetwork() {
+    if (window.fetch && !window.fetch._syspricing) {
+      var origFetch = window.fetch;
+      window.fetch = function () {
+        return origFetch.apply(this, arguments).then(function (res) {
+          try {
+            var req = arguments[0];
+            var url = String((req && req.url) || req || '');
+            if (isCartMutationUrl(url)) scheduleCartPaint();
+          } catch (_) {}
+          return res;
+        });
+      };
+      window.fetch._syspricing = true;
+    }
+    if (window.XMLHttpRequest && !window.XMLHttpRequest._syspricing) {
+      var origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        this._syspricingUrl = String(url || '');
+        return origOpen.apply(this, arguments);
+      };
+      var origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function () {
+        this.addEventListener('load', function () {
+          if (isCartMutationUrl(this._syspricingUrl)) scheduleCartPaint();
+        });
+        return origSend.apply(this, arguments);
+      };
+      window.XMLHttpRequest._syspricing = true;
+    }
+    document.addEventListener('cart:updated', scheduleCartPaint);
+    document.addEventListener('cart:refresh', scheduleCartPaint);
+    document.addEventListener('theme:cart:change', scheduleCartPaint);
+  }
+
   function init() {
     var nodes = document.querySelectorAll('#syspricing-b2b-price, .syspricing-b2b-price');
     for (var i = 0; i < nodes.length; i++) boot(nodes[i]);
     fetchGridPrices();
+    watchCartNetwork();
+    paintCartFromApi();
+    setTimeout(paintCartFromApi, 400);
+    setTimeout(paintCartFromApi, 1200);
   }
 
   if (document.readyState === 'loading') {
@@ -284,5 +570,23 @@
       clearTimeout(t);
       t = setTimeout(fetchGridPrices, 120);
     }).observe(grid, { childList: true, subtree: true });
+  }
+  if (window.MutationObserver) {
+    var cartObsT = null;
+    new MutationObserver(function (mutations) {
+      var relevant = false;
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        var t = m.target;
+        if (t && t.closest && t.closest('.syspricing-cart-price, .syspricing-card-price, .syspricing-b2b-price')) {
+          continue;
+        }
+        relevant = true;
+        break;
+      }
+      if (!relevant) return;
+      clearTimeout(cartObsT);
+      cartObsT = setTimeout(paintCartFromApi, 250);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 })();

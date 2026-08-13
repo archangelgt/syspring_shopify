@@ -1,5 +1,7 @@
 'use strict';
 
+const { expandTagsForHasTags } = require('../../domain/entities');
+
 const DISCOUNT_TITLE = 'SYSPRICING B2B';
 const FUNCTION_HANDLE = 'syspricing-discount';
 const META_NAMESPACE = 'syspricing';
@@ -13,9 +15,17 @@ function createDiscountSetup({ functionHandle = FUNCTION_HANDLE } = {}) {
   async function ensureAutomaticDiscount(client, config) {
     if (!client) return { ok: false, reason: 'NO_CLIENT' };
 
-    const tags = Array.isArray(config?.tags) ? config.tags.map(String) : [];
+    const tags = expandTagsForHasTags(
+      Array.isArray(config?.tags) ? config.tags.map(String) : []
+    );
     const priority =
-      config?.priority && typeof config.priority === 'object' ? config.priority : {};
+      config?.priority && typeof config.priority === 'object' ? { ...config.priority } : {};
+    tags.forEach((t) => {
+      if (priority[t] == null) {
+        const lower = String(t).toLowerCase();
+        if (priority[lower] != null) priority[t] = priority[lower];
+      }
+    });
     const value = JSON.stringify({ tags, priority });
 
     const existing = await findSyspricingDiscount(client);

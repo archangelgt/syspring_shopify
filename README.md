@@ -74,5 +74,6 @@ Shopify **no** cambia el precio de la ficha de producto con Functions (solo cart
 3. En el theme, añade el App Block **SYSPRICING B2B Price**, o el snippet Liquid (ver tab Inicio en la app).
 4. El JS llama `/apps/syspricing/prices?variant_ids=…` con el customer logueado y reemplaza el precio.
 5. **Cart / checkout:** despliega `extensions/syspricing-discount` (`shopify app deploy`) y pulsa **Preparar tienda** (descuento automático + `write_discounts`).
+6. **Drawer / página carrito:** activa el App embed **SYSPRICING cart B2B**, o pega `snippets/syspricing-cart-boot.liquid` en `theme.liquid` (el grid de colección ya carga el JS).
 
 Assets públicos: `/storefront/syspricing-price.js` y `.css`.

@@ -1,0 +1,24 @@
+{% comment %}
+  App embed — loads B2B cart/checkout helper on every page for logged-in customers.
+  Enable in Theme settings → App embeds → SYSPRICING cart B2B.
+{% endcomment %}
+{% if customer %}
+  <div
+    id="syspricing-cart-boot"
+    hidden
+    data-logged-in="1"
+    data-customer-tags="{{ customer.tags | join: ',' | escape }}"
+    data-proxy="/apps/syspricing/prices"
+    data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
+  ></div>
+{% endif %}
+
+{% schema %}
+{
+  "name": "SYSPRICING cart B2B",
+  "target": "body",
+  "javascript": "syspricing-price.js",
+  "stylesheet": "syspricing-price.css",
+  "settings": []
+}
+{% endschema %}

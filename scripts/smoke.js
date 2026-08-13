@@ -50,7 +50,7 @@ ABC-1,gid://shopify/ProductVariant/111,MPAÑUELOS,360`;
     tags: ['MPAÑUELOS', 'DPAÑUELOS'],
     shopifyVariantId: 'gid://shopify/ProductVariant/111',
   });
-  if (resolved.reason !== 'ok' || resolved.price !== '335.00' || resolved.matchedTag !== 'DPAÑUELOS') {
+  if (resolved.reason !== 'ok' || resolved.price !== '335.00' || resolved.matchedTag !== 'dpañuelos') {
     throw new Error(`resolve failed: ${JSON.stringify(resolved)}`);
   }
 
@@ -66,6 +66,12 @@ ABC-1,gid://shopify/ProductVariant/111,MPAÑUELOS,360`;
 
   const logs = useCases.activity.list(shop, 20);
   if (!logs.length) throw new Error('expected activity logs');
+
+  const { expandTagsForHasTags } = require('../src/domain/entities');
+  const variants = expandTagsForHasTags(['distribuidor']);
+  if (!variants.includes('Distribuidor') || !variants.includes('DISTRIBUIDOR')) {
+    throw new Error('tag case variants missing: ' + variants.join(','));
+  }
 
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
