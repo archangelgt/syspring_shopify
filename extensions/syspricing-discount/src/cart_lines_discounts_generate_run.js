@@ -99,7 +99,7 @@ export function cartLinesDiscountsGenerateRun(input) {
 
     const perUnit = catalog - target;
     candidates.push({
-      message: matchedTag ? `SYSPRICING ${matchedTag}` : 'SYSPRICING B2B',
+      message: 'Precio Especial',
       targets: [{ cartLine: { id: line.id } }],
       value: {
         fixedAmount: {

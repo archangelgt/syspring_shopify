@@ -80,7 +80,7 @@
       '<span class="syspricing-amount">' +
       b2bText +
       '</span>' +
-      (tag ? ' <span class="syspricing-tag">(' + tag + ')</span>' : '') +
+      ' <span class="syspricing-tag">Precio Especial</span>' +
       '</span>';
     item.setAttribute('data-has-b2b', '1');
     item.classList.add('syspricing-grid-item--b2b');
@@ -195,7 +195,7 @@
       lastInfo = info;
       var formatted = formatMoney(info.price, info.currency || currency);
       if (amountEl) amountEl.textContent = formatted;
-      if (tagEl) tagEl.textContent = info.matchedTag ? '(' + info.matchedTag + ')' : '';
+      if (tagEl) tagEl.textContent = 'Precio Especial';
       if (compareEl) {
         var compareText = formatCompareMoney(compareRaw, info.currency || currency);
         if (compareText) {
@@ -592,13 +592,27 @@
     return String(pricesProxy || '/apps/syspricing/prices').replace(/\/prices\/?$/, '/checkout-discount');
   }
 
-  function goToCheckout(code) {
-    if (code) {
-      window.location.href =
-        '/discount/' + encodeURIComponent(code) + '?redirect=' + encodeURIComponent('/checkout');
+  function goToCheckout(codes) {
+    var list = Array.isArray(codes) ? codes.filter(Boolean) : codes ? [codes] : [];
+    if (!list.length) {
+      window.location.href = '/checkout';
       return;
     }
-    window.location.href = '/checkout';
+    if (list.length === 1) {
+      window.location.href =
+        '/discount/' + encodeURIComponent(list[0]) + '?redirect=' + encodeURIComponent('/checkout');
+      return;
+    }
+    fetch('/cart/update.js', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ discount: list.join(',') }),
+    })
+      .catch(function () {})
+      .then(function () {
+        window.location.href = '/checkout';
+      });
   }
 
   function requestCheckoutCode(cart, boot) {
@@ -619,8 +633,9 @@
       })
       .then(function (body) {
         var data = (body && body.data) || {};
-        if (data.ok && data.code) return data.code;
-        return null;
+        if (data.ok && Array.isArray(data.codes) && data.codes.length) return data.codes;
+        if (data.ok && data.code) return [data.code];
+        return [];
       });
   }
 
@@ -636,14 +651,14 @@
     e.preventDefault();
     e.stopPropagation();
     var done = false;
-    function finish(code) {
+    function finish(codes) {
       if (done) return;
       done = true;
       clearTimeout(timeout);
-      goToCheckout(code);
+      goToCheckout(codes);
     }
     var timeout = setTimeout(function () {
-      finish(null);
+      finish([]);
     }, 12000);
     fetch('/cart.js', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
       .then(function (r) {
@@ -651,15 +666,15 @@
       })
       .then(function (cart) {
         if (!cart || !cart.items || !cart.items.length) {
-          finish(null);
+          finish([]);
           return;
         }
-        return requestCheckoutCode(cart, boot).then(function (code) {
-          finish(code);
+        return requestCheckoutCode(cart, boot).then(function (codes) {
+          finish(codes);
         });
       })
       .catch(function () {
-        finish(null);
+        finish([]);
       });
     return true;
   }

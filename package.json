@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test:smoke": "node scripts/smoke.js",
-    "test:discount": "node extensions/syspricing-discount/src/cart_lines_discounts_generate_run.test.js"
+    "test:discount": "node extensions/syspricing-discount/src/cart_lines_discounts_generate_run.test.js",
+    "test:native-discount": "node scripts/native-discount.test.js"
   },
   "engines": {
     "node": ">=20"

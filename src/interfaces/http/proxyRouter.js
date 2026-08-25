@@ -168,6 +168,8 @@ function createProxyRouter({ useCases, customersAdmin, getAdminClient, apiSecret
         skipped: Boolean(result.skipped),
         ok: result.ok,
         amount: result.amount,
+        codes: result.codes || (result.code ? [result.code] : []),
+        groups: result.groups || null,
         reason: result.reason || null,
       });
 
