@@ -74,6 +74,47 @@
 [data-syspricing-dup-hidden='1'] {
   display: none !important;
 }
+.syspricing-cart-loader {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.65rem;
+  background: rgba(255, 255, 255, 0.78);
+  pointer-events: none;
+}
+.syspricing-cart-loader.is-active {
+  display: flex;
+}
+.syspricing-cart-loading #AjaxCartForm,
+.syspricing-cart-loading #AjaxCartSubtotal,
+.syspricing-cart-loading .cart__items,
+.syspricing-cart-loading #CartTotal {
+  opacity: 0.35;
+  transition: opacity 0.18s ease;
+}
+.syspricing-cart-loader__spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(17, 17, 17, 0.12);
+  border-top-color: #111111;
+  border-radius: 50%;
+  animation: syspricing-spin 0.7s linear infinite;
+}
+.syspricing-cart-loader__text {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #444444;
+  letter-spacing: 0.01em;
+}
+@keyframes syspricing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 #CartTotal .syspricing-cart-price,
 #AjaxCartSubtotal .syspricing-cart-price {
   display: inline-flex;
