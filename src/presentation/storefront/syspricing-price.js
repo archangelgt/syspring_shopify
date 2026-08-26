@@ -7,16 +7,42 @@
   if (window.__SYSPRICING_PRICE_BOOTED) return;
   window.__SYSPRICING_PRICE_BOOTED = true;
   var session = { loggedIn: false, customerId: null };
+  var lastB2bCartTotal = null;
+  var lastCatalogCartTotal = null;
   function formatMoney(price, currency) {
     var n = Number(price);
     if (!Number.isFinite(n)) return String(price);
     var cur = String(currency || 'GTQ').toUpperCase();
-    if (cur === 'GTQ') return 'Q' + n.toFixed(2);
+    var parts = n.toFixed(2).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (cur === 'GTQ') return 'Q' + parts.join('.');
     try {
       return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur }).format(n);
     } catch (_) {
-      return cur + ' ' + n.toFixed(2);
+      return cur + ' ' + parts.join('.');
     }
+  }
+
+  function parseMoneyText(text) {
+    var t = String(text || '')
+      .replace(/\s+/g, '')
+      .replace(/^Total:/i, '')
+      .replace(/^[Qq]/, '')
+      .replace(/GTQ$/i, '');
+    if (!t || !/\d/.test(t)) return NaN;
+    var lastComma = t.lastIndexOf(',');
+    var lastDot = t.lastIndexOf('.');
+    if (lastComma > lastDot && /,\d{1,2}$/.test(t)) {
+      t = t.replace(/\./g, '').replace(',', '.');
+    } else {
+      t = t.replace(/,/g, '');
+    }
+    t = t.replace(/[^\d.-]/g, '');
+    return Number(t);
+  }
+
+  function amountsEqual(a, b) {
+    return Math.abs(Number(a) - Number(b)) < 0.009;
   }
 
   function formatCompareMoney(cents, currency) {
@@ -308,49 +334,28 @@
     return getBoot();
   }
 
-  function moneyTextVariants(major, currency) {
-    var n = Number(major);
-    if (!Number.isFinite(n)) return [];
-    var formatted = formatMoney(n, currency);
-    var two = n.toFixed(2);
-    var whole = String(Math.round(n));
-    var twoComma = two.replace('.', ',');
-    var out = [formatted, 'Q' + two, 'Q' + whole, 'Q' + twoComma, two, whole];
-    if (String(currency || '').toUpperCase() === 'GTQ') {
-      out.push('Q ' + two, 'Q ' + whole);
-    }
-    return out.filter(function (t, i, arr) {
-      return t && arr.indexOf(t) === i;
-    });
-  }
-
-  function leafMoneyNodes(root, major, currency) {
+  function moneyLeafNodes(root) {
     if (!root) return [];
-    var texts = moneyTextVariants(major, currency);
-    var set = {};
-    for (var i = 0; i < texts.length; i++) set[texts[i]] = true;
-    var nodes = root.querySelectorAll('span, div, p, b, strong, td, em, small, a');
+    var nodes = root.querySelectorAll('span, div, p, b, strong, td, em, small, a, h2, h3, h4');
     var hits = [];
     for (var j = 0; j < nodes.length; j++) {
       var el = nodes[j];
-      if (el.closest && el.closest('.syspricing-card-price, .syspricing-b2b-price, .syspricing-cart-price')) {
-        continue;
-      }
+      if (el.closest && el.closest('.syspricing-card-price, .syspricing-b2b-price')) continue;
       if (el.children && el.children.length) continue;
-      var t = String(el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (set[t]) hits.push(el);
+      var n = parseMoneyText(el.textContent);
+      if (Number.isFinite(n) && n > 0) hits.push({ el: el, amount: n });
     }
     return hits;
   }
 
   function paintMoneyNode(el, catalogMajor, b2bMajor, currency) {
-    if (!el || el.getAttribute('data-syspricing-cart-painted') === '1') return;
-    if (el.closest && el.closest('.syspricing-cart-price, .syspricing-card-price, .syspricing-b2b-price')) {
-      return;
-    }
+    if (!el) return;
+    if (el.closest && el.closest('.syspricing-card-price, .syspricing-b2b-price')) return;
     var catalogText = formatMoney(catalogMajor, currency);
     var b2bText = formatMoney(b2bMajor, currency);
     if (catalogText === b2bText) return;
+    var existing = el.querySelector && el.querySelector('.syspricing-amount');
+    if (existing && amountsEqual(parseMoneyText(existing.textContent), b2bMajor)) return;
     el.setAttribute('data-syspricing-cart-painted', '1');
     el.classList.add('syspricing-cart-price');
     el.innerHTML =
@@ -363,14 +368,13 @@
 
   function paintCartTotalElement(el, catalogMajor, b2bMajor, currency) {
     if (!el) return;
-    if (el.getAttribute('data-syspricing-cart-painted') === '1') return;
-    if (el.querySelector && el.querySelector('.syspricing-cart-price')) {
-      el.setAttribute('data-syspricing-cart-painted', '1');
-      return;
-    }
     var catalogText = formatMoney(catalogMajor, currency);
     var b2bText = formatMoney(b2bMajor, currency);
     if (catalogText === b2bText) return;
+    var existing = el.querySelector && el.querySelector('.syspricing-amount');
+    if (existing && amountsEqual(parseMoneyText(existing.textContent), b2bMajor) && /syspricing-cart-price/.test(el.innerHTML)) {
+      return;
+    }
     el.setAttribute('data-syspricing-cart-painted', '1');
     el.innerHTML =
       'Total: <span class="syspricing-cart-price"><span class="syspricing-compare">' +
@@ -378,6 +382,27 @@
       '</span> <span class="syspricing-amount">' +
       b2bText +
       '</span></span>';
+  }
+
+  function paintRowPrices(row, catalogUnit, qty, b2bUnit, currency) {
+    if (!row) return;
+    var lineCat = catalogUnit * qty;
+    var lineB2b = b2bUnit * qty;
+    var nodes = moneyLeafNodes(row);
+    var painted = false;
+    for (var i = 0; i < nodes.length; i++) {
+      var val = nodes[i].amount;
+      if (amountsEqual(val, lineCat)) {
+        paintMoneyNode(nodes[i].el, lineCat, lineB2b, currency);
+        painted = true;
+      } else if (amountsEqual(val, catalogUnit)) {
+        paintMoneyNode(nodes[i].el, catalogUnit, b2bUnit, currency);
+        painted = true;
+      }
+    }
+    if (!painted && nodes.length) {
+      paintMoneyNode(nodes[nodes.length - 1].el, lineCat, lineB2b, currency);
+    }
   }
 
   function findItemRoots(cartRoot, item) {
@@ -390,6 +415,7 @@
       sels.push('[data-variant-id="' + vid + '"]');
       sels.push('[data-id="' + vid + '"]');
       sels.push('[data-variant="' + vid + '"]');
+      sels.push('[ymq-b2b-variant-id="' + vid + '"]');
     }
     if (item.key) {
       sels.push('[data-line="' + item.key + '"]');
@@ -397,20 +423,27 @@
     }
     for (var i = 0; i < sels.length; i++) {
       var found = cartRoot.querySelectorAll(sels[i]);
-      for (var j = 0; j < found.length; j++) roots.push(found[j]);
+      for (var j = 0; j < found.length; j++) {
+        var row = found[j].closest
+          ? found[j].closest('tr, li, article, .cart-item, .ajax-cart__product, [class*="cart-item"], [class*="cart__item"]') || found[j]
+          : found[j];
+        if (roots.indexOf(row) === -1) roots.push(row);
+      }
     }
+    var wrap = cartRoot.querySelector('.cart__items') || cartRoot;
     if (!roots.length && handle) {
-      var links = cartRoot.querySelectorAll('a[href*="/products/' + handle + '"]');
+      var links = wrap.querySelectorAll('a[href*="/products/' + handle + '"]');
       for (var k = 0; k < links.length; k++) {
-        var row = links[k].closest('tr, li, .cart-item, .ajax-cart__product, [class*="cart-item"], [class*="cart__item"]');
-        if (row) roots.push(row);
+        var linkRow = links[k].closest('tr, li, article, .cart-item, .ajax-cart__product, [class*="cart-item"], [class*="cart__item"]');
+        if (linkRow && roots.indexOf(linkRow) === -1) roots.push(linkRow);
       }
     }
     if (!roots.length && title) {
-      var candidates = cartRoot.querySelectorAll('tr, li, article, [class*="cart-item"], [class*="cart__item"], [class*="ajax-cart"]');
-      for (var m = 0; m < candidates.length; m++) {
-        var txt = String(candidates[m].textContent || '');
-        if (txt.indexOf(title) !== -1) roots.push(candidates[m]);
+      var kids = wrap.children && wrap.children.length ? wrap.children : wrap.querySelectorAll('tr, li, article, [class*="cart-item"], [class*="cart__item"], [class*="ajax-cart"]');
+      for (var m = 0; m < kids.length; m++) {
+        var node = kids[m];
+        var txt = String(node.textContent || '');
+        if (txt.indexOf(title) !== -1 && roots.indexOf(node) === -1) roots.push(node);
       }
     }
     return roots;
@@ -435,7 +468,9 @@
       '.drawer--cart',
       'form[action="/cart"]',
       'form[action$="/cart"]',
-      '.cart-items',
+      '.cart__items',
+      '.cart__footer',
+      '#CartDetails',
       '#CartItems',
       '.cart__items',
       '.cart-overlay',
@@ -484,43 +519,30 @@
       b2bSubtotal += b2bUnit * qty;
       if (!Number.isFinite(b2bUnit) || b2bUnit >= catalogUnit) continue;
 
+      var painted = false;
       for (var r = 0; r < roots.length; r++) {
         var itemRoots = findItemRoots(roots[r], item);
-        if (!itemRoots.length) {
-          var rid = roots[r].id || '';
-          if (rid === 'AjaxCartSubtotal' || rid === 'CartTotal') continue;
-          itemRoots = [roots[r]];
-        }
+        var rid = roots[r].id || '';
+        if (rid === 'AjaxCartSubtotal' || rid === 'CartTotal') continue;
         for (var ir = 0; ir < itemRoots.length; ir++) {
-          var unitNodes = leafMoneyNodes(itemRoots[ir], catalogUnit, currency);
-          for (var u = 0; u < unitNodes.length; u++) {
-            paintMoneyNode(unitNodes[u], catalogUnit, b2bUnit, currency);
-          }
-          var lineCatalog = catalogUnit * qty;
-          var lineB2b = b2bUnit * qty;
-          if (qty > 1 || lineCatalog !== catalogUnit) {
-            var lineNodes = leafMoneyNodes(itemRoots[ir], lineCatalog, currency);
-            for (var ln = 0; ln < lineNodes.length; ln++) {
-              paintMoneyNode(lineNodes[ln], lineCatalog, lineB2b, currency);
-            }
-          }
+          paintRowPrices(itemRoots[ir], catalogUnit, qty, b2bUnit, currency);
+          painted = true;
         }
+      }
+      if (!painted) {
+        var itemsWrap = document.querySelector('#AjaxCartForm .cart__items, cart-form .cart__items, .cart__items');
+        if (itemsWrap) paintRowPrices(itemsWrap, catalogUnit, qty, b2bUnit, currency);
       }
     }
 
     if (b2bSubtotal < catalogSubtotal) {
-      var cartTotalEl = document.getElementById('CartTotal');
-      if (cartTotalEl) {
-        paintCartTotalElement(cartTotalEl, catalogSubtotal, b2bSubtotal, currency);
-      } else {
-        var subtotalRoot = document.getElementById('AjaxCartSubtotal');
-        var totalRoots = subtotalRoot ? [subtotalRoot] : roots;
-        for (var t = 0; t < totalRoots.length; t++) {
-          var totalNodes = leafMoneyNodes(totalRoots[t], catalogSubtotal, currency);
-          for (var tn = 0; tn < totalNodes.length; tn++) {
-            paintMoneyNode(totalNodes[tn], catalogSubtotal, b2bSubtotal, currency);
-          }
-        }
+      lastB2bCartTotal = b2bSubtotal;
+      lastCatalogCartTotal = catalogSubtotal;
+      paintCartTotalElement(document.getElementById('CartTotal'), catalogSubtotal, b2bSubtotal, currency);
+      var extraTotals = document.querySelectorAll('.wcp-cart-total, [ymq-b2b-cart-total-price], [data-wpd-cart-total] span');
+      for (var xt = 0; xt < extraTotals.length; xt++) {
+        if (extraTotals[xt].closest && extraTotals[xt].closest('#CartTotal .syspricing-cart-price')) continue;
+        paintMoneyNode(extraTotals[xt], catalogSubtotal, b2bSubtotal, currency);
       }
     }
   }
@@ -565,7 +587,15 @@
           suppressCartObs = true;
           try {
             restoreCartPrices();
-            if (hasB2b) paintCart(cart, prices, currency);
+            if (hasB2b) {
+              paintCart(cart, prices, currency);
+              setTimeout(function () {
+                paintCart(cart, prices, currency);
+              }, 250);
+              setTimeout(function () {
+                paintCart(cart, prices, currency);
+              }, 900);
+            }
           } finally {
             setTimeout(function () {
               suppressCartObs = false;
@@ -857,7 +887,16 @@
       for (var i = 0; i < mutations.length; i++) {
         var m = mutations[i];
         var t = m.target;
-        if (t && t.closest && t.closest('.syspricing-cart-price, .syspricing-card-price, .syspricing-b2b-price, #CartTotal')) {
+        if (t && t.closest && t.closest('.syspricing-card-price, .syspricing-b2b-price')) {
+          continue;
+        }
+        if (
+          t &&
+          t.closest &&
+          t.closest('.syspricing-cart-price') &&
+          lastB2bCartTotal != null &&
+          amountsEqual(parseMoneyText((document.getElementById('CartTotal') || {}).textContent || ''), lastB2bCartTotal)
+        ) {
           continue;
         }
         relevant = true;
