@@ -438,7 +438,7 @@
     var nodes = moneyLeafNodes(row, true);
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i].el;
-      if (el === keepEl || (keepEl.contains && keepEl.contains(el))) continue;
+      if (el === keepEl || (keepEl.contains && keepEl.contains(el)) || (el.contains && el.contains(keepEl))) continue;
       if (el.closest && el.closest('#CartTotal, .cart__footer, #AjaxCartSubtotal')) continue;
       if (el.getAttribute('data-syspricing-dup-hidden') === '1') continue;
       el.setAttribute('data-syspricing-dup-hidden', '1');
@@ -447,36 +447,63 @@
     }
   }
 
-  function pickRowPriceTarget(row, catalogUnit, qty, b2bUnit) {
-    var lineCat = catalogUnit * qty;
-    var lineB2b = b2bUnit * qty;
-    var preferred = row.querySelector('.product-price, .ajax-cart__price, .cart-item__price, .cart__price, .price, [data-cart-item-price]');
-    var scope = preferred || row;
-    var nodes = moneyLeafNodes(scope);
-    if (!nodes.length && scope !== row) nodes = moneyLeafNodes(row);
-    function match(amount) {
-      for (var i = nodes.length - 1; i >= 0; i--) {
-        if (amountsEqual(nodes[i].amount, amount)) return nodes[i];
-      }
-      return null;
+  function moneyPriceHosts(row, includeHidden) {
+    if (!row) return [];
+    var hosts = [];
+    var seen = [];
+    function add(el) {
+      if (!el || seen.indexOf(el) !== -1) return;
+      if (!includeHidden && isHiddenEl(el)) return;
+      if (el.closest && el.closest('.syspricing-cart-line-price, .syspricing-b2b-price, .syspricing-card-price')) return;
+      if (el.closest && el.closest('.quantity, .qty, [data-quantity-input], input, textarea, button')) return;
+      var amount = parseMoneyText(el.textContent);
+      if (!Number.isFinite(amount) || amount <= 0) return;
+      seen.push(el);
+      hosts.push({ el: el, amount: amount });
     }
-    var hit = match(lineCat) || match(catalogUnit) || match(lineB2b) || match(b2bUnit);
-    if (hit) {
-      var useUnit = amountsEqual(hit.amount, catalogUnit) || amountsEqual(hit.amount, b2bUnit);
-      return {
-        el: hit.el,
-        catalog: useUnit ? catalogUnit : lineCat,
-        b2b: useUnit ? b2bUnit : lineB2b,
-      };
+    var sels =
+      '.cart__price, .product-price, .ajax-cart__price, .cart-item__price, .price, [data-cart-item-price], [ymq-b2b-variant-price], [class*="cart"][class*="price"]';
+    var preferred = row.querySelectorAll(sels);
+    for (var p = 0; p < preferred.length; p++) add(preferred[p]);
+    var leaves = moneyLeafNodes(row, includeHidden);
+    for (var l = 0; l < leaves.length; l++) add(leaves[l].el);
+    return hosts;
+  }
+
+  function ensureRowPriceEl(row) {
+    if (!row) return null;
+    var slot = row.querySelector('.syspricing-cart-line-price');
+    if (slot) return slot;
+    var hosts = moneyPriceHosts(row);
+    if (hosts.length) return hosts[hosts.length - 1].el;
+    var anchor = row.querySelector('.cart__price, .product-price, .ajax-cart__price, .cart-item__price, .price, [data-cart-item-price]');
+    if (anchor) return anchor;
+    slot = document.createElement('span');
+    slot.className = 'syspricing-cart-line-price';
+    var title = row.querySelector('a[href*="/products/"], .cart-item__title, .product-title, h2, h3, h4');
+    if (title && title.parentNode) title.parentNode.insertBefore(slot, title.nextSibling);
+    else row.appendChild(slot);
+    return slot;
+  }
+
+  function hideRowThemePrices(row, keepEl) {
+    if (!row || !keepEl) return;
+    var sels =
+      '.cart__price, .product-price, .ajax-cart__price, .cart-item__price, .price, [data-cart-item-price], [ymq-b2b-variant-price], [class*="wcp-"], [class*="ymq-b2b"]';
+    var themed = row.querySelectorAll(sels);
+    for (var t = 0; t < themed.length; t++) {
+      var el = themed[t];
+      if (el === keepEl || (keepEl.contains && keepEl.contains(el)) || (el.contains && el.contains(keepEl))) continue;
+      if (el.getAttribute('data-syspricing-dup-hidden') === '1') continue;
+      el.setAttribute('data-syspricing-dup-hidden', '1');
+      el.setAttribute('data-syspricing-dup-display', el.style.display || '');
+      el.style.display = 'none';
     }
-    if (nodes.length) {
-      return { el: nodes[nodes.length - 1].el, catalog: lineCat, b2b: lineB2b };
-    }
-    return null;
+    hideOtherMoneyLeaves(row, keepEl);
   }
 
   function rowHasCorrectPrice(row, catalogMajor, b2bMajor) {
-    var wrap = row.querySelector('.syspricing-cart-price');
+    var wrap = row.querySelector('.syspricing-cart-line-price, .syspricing-cart-price');
     if (!wrap) return false;
     var cmp = wrap.querySelector('.syspricing-compare');
     var amt = wrap.querySelector('.syspricing-amount');
@@ -488,81 +515,67 @@
     );
   }
 
-  function flattenPaintedRow(row) {
-    if (!row) return;
-    var hosts = row.querySelectorAll('.syspricing-cart-price');
-    for (var i = hosts.length - 1; i >= 0; i--) {
-      var host = hosts[i];
-      var catalog = host.getAttribute('data-syspricing-catalog') || '';
-      if (!catalog) {
-        var html = String(host.innerHTML || '');
-        var tagged = html.match(/syspricing-compare[^>]*>([^<]+)/);
-        catalog = tagged ? tagged[1].trim() : '';
-      }
-      if (!catalog) {
-        var money = String(host.textContent || '').match(/Q[\d.,]+/);
-        catalog = money ? money[0] : String(host.textContent || '').trim();
-      }
-      host.textContent = catalog;
-      host.classList.remove('syspricing-cart-price');
-      host.removeAttribute('data-syspricing-cart-painted');
-      host.removeAttribute('data-syspricing-catalog');
-    }
-    row.removeAttribute('data-syspricing-row-painted');
-  }
-
   function paintRowPrices(row, catalogUnit, qty, b2bUnit, currency) {
     if (!row) return;
     var lineCat = catalogUnit * qty;
     var lineB2b = b2bUnit * qty;
-    var wraps = row.querySelectorAll('.syspricing-cart-price');
-    if (
-      wraps.length === 1 &&
-      (rowHasCorrectPrice(row, lineCat, lineB2b) || rowHasCorrectPrice(row, catalogUnit, b2bUnit))
-    ) {
-      hideOtherMoneyLeaves(row, wraps[0]);
+    var useLine = qty > 1;
+    var catalogMajor = useLine ? lineCat : catalogUnit;
+    var b2bMajor = useLine ? lineB2b : b2bUnit;
+    if (rowHasCorrectPrice(row, catalogMajor, b2bMajor)) {
+      hideRowThemePrices(row, row.querySelector('.syspricing-cart-line-price, .syspricing-cart-price'));
       row.setAttribute('data-syspricing-row-painted', '1');
       return;
     }
-    if (wraps.length) flattenPaintedRow(row);
-    var target = pickRowPriceTarget(row, catalogUnit, qty, b2bUnit);
-    if (!target) return;
-    paintMoneyNode(target.el, target.catalog, target.b2b, currency);
-    hideOtherMoneyLeaves(row, target.el);
+    var slot = ensureRowPriceEl(row);
+    if (!slot) return;
+    slot.classList.add('syspricing-cart-line-price');
+    paintMoneyNode(slot, catalogMajor, b2bMajor, currency);
+    hideRowThemePrices(row, slot);
     row.setAttribute('data-syspricing-row-painted', '1');
   }
 
   function cartItemRows() {
+    var list = document.querySelectorAll('#AjaxCartForm [data-js-cart-item], cart-form [data-js-cart-item]');
+    if (list.length) return Array.prototype.slice.call(list);
     var wrap = document.querySelector('#AjaxCartForm .cart__items, cart-form .cart__items, form.cart__form .cart__items, .cart__items');
     if (!wrap) return [];
     return Array.prototype.slice.call(wrap.children);
   }
 
-  function findItemRow(item) {
+  function findItemRow(item, index) {
     var rows = cartItemRows();
     if (!rows.length) return null;
+    var lineNo = index + 1;
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].getAttribute('data-line') || '') === String(lineNo)) return rows[i];
+    }
     var vid = String(item.variant_id || '');
     var handle = item.handle || '';
     var title = String(item.product_title || item.title || '').trim();
     var key = item.key || '';
     function rowMatch(test) {
-      for (var i = 0; i < rows.length; i++) {
-        if (test(rows[i])) return rows[i];
+      for (var r = 0; r < rows.length; r++) {
+        if (test(rows[r])) return rows[r];
       }
       return null;
     }
     var found = null;
+    if (key) {
+      found = rowMatch(function (row) {
+        return (
+          row.getAttribute('data-key') === key ||
+          row.getAttribute('data-line-key') === key ||
+          row.querySelector('[data-key="' + key + '"], [data-line-key="' + key + '"]')
+        );
+      });
+      if (found) return found;
+    }
     if (vid) {
       found = rowMatch(function (row) {
         return row.querySelector(
           '[data-variant-id="' + vid + '"], [data-id="' + vid + '"], [data-variant="' + vid + '"], [ymq-b2b-variant-id="' + vid + '"]'
         );
-      });
-      if (found) return found;
-    }
-    if (key) {
-      found = rowMatch(function (row) {
-        return row.querySelector('[data-line="' + key + '"], [data-key="' + key + '"]');
       });
       if (found) return found;
     }
@@ -579,6 +592,7 @@
       }
       if (matches.length === 1) return matches[0];
     }
+    if (index < rows.length) return rows[index];
     return null;
   }
 
@@ -587,7 +601,6 @@
 
     var b2bSubtotal = 0;
     var catalogSubtotal = 0;
-    var usedRows = [];
 
     for (var i = 0; i < cart.items.length; i++) {
       var item = cart.items[i];
@@ -604,13 +617,8 @@
       b2bSubtotal += b2bUnit * qty;
       if (!Number.isFinite(b2bUnit) || b2bUnit >= catalogUnit) continue;
 
-      var row = findItemRow(item);
-      if (!row) {
-        var allRows = cartItemRows();
-        if (allRows.length === cart.items.length) row = allRows[i];
-      }
-      if (!row || usedRows.indexOf(row) !== -1) continue;
-      usedRows.push(row);
+      var row = findItemRow(item, i);
+      if (!row) continue;
       paintRowPrices(row, catalogUnit, qty, b2bUnit, currency);
     }
 
@@ -668,13 +676,19 @@
               setTimeout(function () {
                 paintCart(cart, prices, currency);
               }, 900);
+              setTimeout(function () {
+                paintCart(cart, prices, currency);
+              }, 1800);
+              setTimeout(function () {
+                paintCart(cart, prices, currency);
+              }, 3000);
             } else {
               restoreCartPrices();
             }
           } finally {
             setTimeout(function () {
               suppressCartObs = false;
-            }, 400);
+            }, 3200);
           }
           return hasB2b || session.loggedIn;
         });

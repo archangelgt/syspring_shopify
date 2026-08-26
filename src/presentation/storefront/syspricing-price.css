@@ -65,8 +65,11 @@
   color: #111111;
   font-weight: 700;
 }
-.syspricing-cart-price .syspricing-cart-price {
-  display: none !important;
+.syspricing-cart-line-price {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.4rem;
 }
 [data-syspricing-dup-hidden='1'] {
   display: none !important;
