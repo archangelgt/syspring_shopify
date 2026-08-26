@@ -1,16 +1,15 @@
 {%- comment -%}
-  Pegar en layout/theme.liquid antes de </body> para que el drawer y /cart
-  muestren precio B2B (el grid de colección ya carga este JS).
+  Pegar en layout/theme.liquid antes de </body>. Cargar siempre (no solo si hay
+  customer) para que login/logout recargue el precio B2B sin HTML cacheado.
 {%- endcomment -%}
-{%- if customer -%}
-  <div
-    id="syspricing-cart-boot"
-    hidden
-    data-logged-in="1"
-    data-customer-tags="{{ customer.tags | join: ',' | escape }}"
-    data-proxy="/apps/syspricing/prices"
-    data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
-  ></div>
-  {{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=15' | stylesheet_tag }}
-  <script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=15" defer></script>
-{%- endif -%}
+<div
+  id="syspricing-cart-boot"
+  hidden
+  data-logged-in="{% if customer %}1{% else %}0{% endif %}"
+  data-customer-id="{{ customer.id }}"
+  data-customer-tags="{{ customer.tags | join: ',' | escape }}"
+  data-proxy="/apps/syspricing/prices"
+  data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
+></div>
+{{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=16' | stylesheet_tag }}
+<script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=16" defer></script>

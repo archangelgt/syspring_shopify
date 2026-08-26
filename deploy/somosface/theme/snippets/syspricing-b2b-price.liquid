@@ -5,7 +5,7 @@
 
 {%- liquid
   assign sp_product = product_resource | default: product
-  if sp_product == blank or customer == blank
+  if sp_product == blank
     echo ''
     break
   endif
@@ -18,11 +18,15 @@
   assign best_priority = -999999
   assign tags_csv = customer.tags | join: ','
   assign catalog_price = sp_variant.price
+  assign sp_logged_in = 0
+  if customer != blank
+    assign sp_logged_in = 1
+  endif
 
-  if prices_map != blank
-                for tag in customer.tags
-                  assign tag_key = tag | strip | downcase
-                  assign candidate = prices_map[tag_key]
+  if customer != blank and prices_map != blank
+    for tag in customer.tags
+      assign tag_key = tag | strip | downcase
+      assign candidate = prices_map[tag_key]
       if candidate == blank
         continue
       endif
@@ -42,7 +46,7 @@
 <div
   id="syspricing-b2b-price"
   class="syspricing-b2b-price"
-  data-logged-in="1"
+  data-logged-in="{{ sp_logged_in }}"
   data-variant-id="{{ sp_variant.id }}"
   data-customer-id="{{ customer.id }}"
   data-customer-tags="{{ tags_csv | escape }}"
@@ -61,5 +65,5 @@
   <div class="syspricing-status" style="display:none"></div>
 </div>
 
-{{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=15' | stylesheet_tag }}
-<script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=15" defer></script>
+{{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=16' | stylesheet_tag }}
+<script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=16" defer></script>

@@ -25,18 +25,19 @@ function createProxyRouter({ useCases, customersAdmin, getAdminClient, apiSecret
       .map((t) => t.trim())
       .filter(Boolean);
 
-    let tags = tagsFromQuery;
+    let tags = [];
     let customer = null;
-    let authSource = 'none';
+    let authSource = 'anonymous';
 
     if (customerId) {
       customer = await customersAdmin.getById(shop, customerId);
       if (customer) {
         tags = customer.tags && customer.tags.length ? customer.tags : tagsFromQuery;
         authSource = 'logged_in_customer_id';
+      } else if (tagsFromQuery.length) {
+        tags = tagsFromQuery;
+        authSource = 'logged_in_id_tags_fallback';
       }
-    } else if (tagsFromQuery.length) {
-      authSource = 'liquid_tags_fallback';
     }
 
     return { shop, customerId, tags, customer, authSource, tagsFromQuery };
@@ -116,7 +117,7 @@ function createProxyRouter({ useCases, customersAdmin, getAdminClient, apiSecret
       res.setHeader('Cache-Control', 'no-store');
       res.status(200).json({
         data: {
-          loggedIn: Boolean(customerId) || tagsFromQuery.length > 0,
+          loggedIn: Boolean(customerId),
           authSource,
           customerId: customer?.id || (customerId ? `gid://shopify/Customer/${customerId}` : null),
           tags,

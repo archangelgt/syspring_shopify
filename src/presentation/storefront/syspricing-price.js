@@ -6,6 +6,7 @@
 (function () {
   if (window.__SYSPRICING_PRICE_BOOTED) return;
   window.__SYSPRICING_PRICE_BOOTED = true;
+  var session = { loggedIn: false, customerId: null };
   function formatMoney(price, currency) {
     var n = Number(price);
     if (!Number.isFinite(n)) return String(price);
@@ -32,6 +33,40 @@
     if (prices[numeric]) return prices[numeric];
     var gid = 'gid://shopify/ProductVariant/' + numeric;
     return prices[gid] || null;
+  }
+
+  function getBoot() {
+    return (
+      document.getElementById('syspricing-cart-boot') ||
+      document.getElementById('syspricing-collection-boot') ||
+      document.querySelector('#syspricing-b2b-price, .syspricing-b2b-price')
+    );
+  }
+
+  function rememberSession(body) {
+    var data = (body && body.data) || {};
+    session.customerId = data.customerId || null;
+    session.loggedIn = Boolean(data.customerId) || data.loggedIn === true;
+    return data;
+  }
+
+  function fetchProxyPrices(variantIds) {
+    var boot = getBoot();
+    var proxy = (boot && boot.getAttribute('data-proxy')) || '/apps/syspricing/prices';
+    var params = new URLSearchParams();
+    params.set('variant_ids', variantIds.join(','));
+    var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
+    return fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }).then(function (r) {
+      if (!r.ok) throw new Error('proxy');
+      return r.json();
+    }).then(function (body) {
+      rememberSession(body);
+      return body;
+    });
   }
 
   function setCatalogFallbackVisible(root, visible) {
@@ -68,9 +103,40 @@
     return null;
   }
 
+  function rememberCatalogHtml(item, priceNode) {
+    if (!item || !priceNode) return;
+    if (item.getAttribute('data-syspricing-catalog-html') != null) return;
+    item.setAttribute('data-syspricing-catalog-html', priceNode.innerHTML);
+  }
+
+  function restoreCard(item) {
+    if (!item) return;
+    var priceNode = findCardPriceNode(item);
+    var html = item.getAttribute('data-syspricing-catalog-html');
+    if (priceNode && html != null) priceNode.innerHTML = html;
+    item.removeAttribute('data-has-b2b');
+    item.removeAttribute('data-syspricing-grid-painted');
+    item.removeAttribute('data-b2b-price');
+    item.removeAttribute('data-b2b-tag');
+    item.classList.remove('syspricing-grid-item--b2b');
+  }
+
+  function restoreCartPrices() {
+    var nodes = document.querySelectorAll('.syspricing-cart-price');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var compare = el.querySelector('.syspricing-compare');
+      var text = compare ? String(compare.textContent || '').trim() : '';
+      el.removeAttribute('data-syspricing-cart-painted');
+      el.classList.remove('syspricing-cart-price');
+      if (text) el.textContent = text;
+    }
+  }
+
   function paintCard(item, b2bPrice, tag, currency) {
     var priceNode = findCardPriceNode(item);
     if (!priceNode) return false;
+    rememberCatalogHtml(item, priceNode);
     var compareRaw = item.getAttribute('data-compare-price') || '';
     var compareText = formatCompareMoney(compareRaw, currency);
     var b2bText = formatMoney(Number(b2bPrice), currency);
@@ -87,78 +153,58 @@
     return true;
   }
 
-  function applyGridItemFromData(item, currency) {
-    if (!item || item.getAttribute('data-syspricing-grid-painted') === '1') return;
-    if (item.getAttribute('data-has-b2b') !== '1') return;
-    var b2b = item.getAttribute('data-b2b-price');
-    if (b2b == null || b2b === '') return;
-    if (paintCard(item, b2b, item.getAttribute('data-b2b-tag') || '', currency || 'GTQ')) {
-      item.setAttribute('data-syspricing-grid-painted', '1');
-    }
-  }
-
   function fetchGridPrices() {
-    var boot = document.getElementById('syspricing-collection-boot');
-    if (!boot || boot.getAttribute('data-logged-in') !== '1') return;
-
+    var boot = getBoot();
     var items = document.querySelectorAll('.syspricing-grid-item[data-variant-id]');
-    if (!items.length) return;
+    if (!items.length) return Promise.resolve(false);
 
-    var currency = boot.getAttribute('data-currency') || 'GTQ';
-    var tags = boot.getAttribute('data-customer-tags') || '';
-    var proxy = boot.getAttribute('data-proxy') || '/apps/syspricing/prices';
-
-    // Instant paint from Liquid metafields when present
-    for (var i = 0; i < items.length; i++) applyGridItemFromData(items[i], currency);
-
+    var currency = (boot && boot.getAttribute('data-currency')) || 'GTQ';
     var ids = [];
     for (var j = 0; j < items.length; j++) {
       var id = items[j].getAttribute('data-variant-id');
       if (id) ids.push(id);
     }
-    if (!ids.length) return;
+    if (!ids.length) return Promise.resolve(false);
 
-    var params = new URLSearchParams();
-    params.set('variant_ids', ids.join(','));
-    if (tags) params.set('tags', tags);
-    var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
-
-    fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-      .then(function (r) {
-        if (!r.ok) throw new Error('proxy');
-        return r.json();
-      })
-      .then(function (body) {
-        var prices = (body && body.data && body.data.prices) || {};
-        for (var k = 0; k < items.length; k++) {
-          var item = items[k];
-          var vid = item.getAttribute('data-variant-id');
-          var info = pickPrice(prices, vid);
-          if (!info || info.price == null || info.price === '') continue;
-          if (
-            paintCard(
-              item,
-              info.price,
-              info.matchedTag || item.getAttribute('data-b2b-tag') || '',
-              info.currency || currency
-            )
-          ) {
-            item.setAttribute('data-syspricing-grid-painted', '1');
-            item.setAttribute('data-b2b-price', String(info.price));
-            if (info.matchedTag) item.setAttribute('data-b2b-tag', info.matchedTag);
-          }
+    return fetchProxyPrices(ids).then(function (body) {
+      var prices = (body && body.data && body.data.prices) || {};
+      var hasAny = false;
+      for (var k = 0; k < items.length; k++) {
+        var item = items[k];
+        var vid = item.getAttribute('data-variant-id');
+        var info = pickPrice(prices, vid);
+        if (!info || info.price == null || info.price === '') {
+          restoreCard(item);
+          continue;
         }
-      })
-      .catch(function () {});
+        hasAny = true;
+        if (
+          paintCard(
+            item,
+            info.price,
+            info.matchedTag || '',
+            info.currency || currency
+          )
+        ) {
+          item.setAttribute('data-syspricing-grid-painted', '1');
+          item.setAttribute('data-b2b-price', String(info.price));
+          if (info.matchedTag) item.setAttribute('data-b2b-tag', info.matchedTag);
+        }
+      }
+      return hasAny || session.loggedIn;
+    }).catch(function () {
+      return false;
+    });
   }
 
   function boot(root) {
-    if (!root || root.getAttribute('data-logged-in') !== '1') return;
-    if (root.getAttribute('data-syspricing-booted') === '1') return;
+    if (!root) return;
+    if (root.getAttribute('data-syspricing-booted') === '1') {
+      if (root._syspricingReload) root._syspricingReload();
+      return;
+    }
     root.setAttribute('data-syspricing-booted', '1');
 
-    var proxy = root.getAttribute('data-proxy') || '/apps/syspricing/prices';
-    var tags = root.getAttribute('data-customer-tags') || '';
     var currency = root.getAttribute('data-currency') || 'GTQ';
     var compareRaw = root.getAttribute('data-compare-price') || '';
     var amountEl = root.querySelector('.syspricing-amount');
@@ -212,41 +258,32 @@
     }
 
     function loadForVariant(variantId, comparePrice) {
-      if (!variantId) return;
+      if (!variantId) return Promise.resolve(false);
       if (comparePrice != null && comparePrice !== '') {
         compareRaw = String(comparePrice);
         root.setAttribute('data-compare-price', compareRaw);
       }
       clearStatus();
-      var params = new URLSearchParams();
-      params.set('variant_ids', String(variantId));
-      if (tags) params.set('tags', tags);
-
-      var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
-
-      fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-        .then(function (r) {
-          if (!r.ok) throw new Error('proxy');
-          return r.json();
-        })
+      return fetchProxyPrices([String(variantId)])
         .then(function (body) {
           if (body && body.error) {
             hideB2b();
-            return;
+            return false;
           }
           var prices = (body && body.data && body.data.prices) || {};
-          applyPrice(pickPrice(prices, variantId));
-          setTimeout(function () {
-            if (lastInfo) applyPrice(lastInfo);
-          }, 400);
-          setTimeout(function () {
-            if (lastInfo) applyPrice(lastInfo);
-          }, 1200);
+          var info = pickPrice(prices, variantId);
+          applyPrice(info);
+          return Boolean(info);
         })
         .catch(function () {
           hideB2b();
+          return false;
         });
     }
+
+    root._syspricingReload = function () {
+      loadForVariant(root.getAttribute('data-variant-id'));
+    };
 
     loadForVariant(root.getAttribute('data-variant-id'));
 
@@ -268,11 +305,7 @@
   }
 
   function getCartBoot() {
-    return (
-      document.getElementById('syspricing-cart-boot') ||
-      document.getElementById('syspricing-collection-boot') ||
-      document.querySelector('#syspricing-b2b-price[data-logged-in="1"], .syspricing-b2b-price[data-logged-in="1"]')
-    );
+    return getBoot();
   }
 
   function moneyTextVariants(major, currency) {
@@ -503,46 +536,50 @@
 
   function paintCartFromApi() {
     var boot = getCartBoot();
-    if (!boot || boot.getAttribute('data-logged-in') !== '1') return;
-    if (cartPaintInFlight) return;
-    var tags = boot.getAttribute('data-customer-tags') || '';
-    var proxy = boot.getAttribute('data-proxy') || '/apps/syspricing/prices';
-    var currency = boot.getAttribute('data-currency') || 'GTQ';
+    if (cartPaintInFlight) return Promise.resolve(false);
+    var currency = (boot && boot.getAttribute('data-currency')) || 'GTQ';
     cartPaintInFlight = true;
 
-    fetch('/cart.js', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    return fetch('/cart.js', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
       .then(function (r) {
         if (!r.ok) throw new Error('cart');
         return r.json();
       })
       .then(function (cart) {
-        var ids = (cart.items || []).map(function (it) {
-          return it.variant_id;
-        }).filter(Boolean);
-        if (!ids.length) return null;
-        var params = new URLSearchParams();
-        params.set('variant_ids', ids.join(','));
-        if (tags) params.set('tags', tags);
-        var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
-        return fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-          .then(function (r) {
-            if (!r.ok) throw new Error('proxy');
-            return r.json();
+        var ids = (cart.items || [])
+          .map(function (it) {
+            return it.variant_id;
           })
-          .then(function (body) {
-            suppressCartObs = true;
-            try {
-              paintCart(cart, (body && body.data && body.data.prices) || {}, currency);
-            } finally {
-              setTimeout(function () {
-                suppressCartObs = false;
-              }, 400);
-            }
-          });
+          .filter(Boolean);
+        if (!ids.length) {
+          restoreCartPrices();
+          return false;
+        }
+        return fetchProxyPrices(ids).then(function (body) {
+          var prices = (body && body.data && body.data.prices) || {};
+          var hasB2b = Object.keys(prices).length > 0;
+          suppressCartObs = true;
+          try {
+            restoreCartPrices();
+            if (hasB2b) paintCart(cart, prices, currency);
+          } finally {
+            setTimeout(function () {
+              suppressCartObs = false;
+            }, 400);
+          }
+          return hasB2b || session.loggedIn;
+        });
       })
-      .catch(function () {})
-      .then(function () {
+      .catch(function () {
+        return false;
+      })
+      .then(function (ok) {
         cartPaintInFlight = false;
+        return ok;
       });
   }
 
@@ -616,8 +653,9 @@
   }
 
   function requestCheckoutCode(cart, boot) {
-    var tags = boot.getAttribute('data-customer-tags') || '';
-    var proxy = checkoutDiscountUrl(boot.getAttribute('data-proxy') || '/apps/syspricing/prices');
+    var proxy = checkoutDiscountUrl(
+      (boot && boot.getAttribute('data-proxy')) || '/apps/syspricing/prices'
+    );
     var lines = (cart.items || [])
       .map(function (it) {
         return String(it.variant_id) + ':' + String(it.quantity || 1);
@@ -625,9 +663,12 @@
       .join(',');
     var params = new URLSearchParams();
     params.set('lines', lines);
-    if (tags) params.set('tags', tags);
     var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
-    return fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    return fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
       .then(function (r) {
         return r.json();
       })
@@ -641,7 +682,7 @@
 
   function proceedToB2bCheckout(e) {
     var boot = getCartBoot();
-    if (!boot || boot.getAttribute('data-logged-in') !== '1') return false;
+    if (!boot) return false;
     if (checkoutInFlight) {
       e.preventDefault();
       e.stopPropagation();
@@ -660,7 +701,11 @@
     var timeout = setTimeout(function () {
       finish([]);
     }, 12000);
-    fetch('/cart.js', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    fetch('/cart.js', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
       .then(function (r) {
         return r.json();
       })
@@ -725,15 +770,57 @@
     );
   }
 
-  function init() {
+  function syncPrices() {
     var nodes = document.querySelectorAll('#syspricing-b2b-price, .syspricing-b2b-price');
     for (var i = 0; i < nodes.length; i++) boot(nodes[i]);
-    fetchGridPrices();
+    var tasks = [fetchGridPrices(), paintCartFromApi()];
+    return Promise.all(tasks);
+  }
+
+  var resyncTimer = null;
+  function scheduleResync(delay) {
+    clearTimeout(resyncTimer);
+    resyncTimer = setTimeout(function () {
+      syncPrices();
+    }, delay || 0);
+  }
+
+  function watchSession() {
+    if (window.__SYSPRICING_SESSION_WATCH) return;
+    window.__SYSPRICING_SESSION_WATCH = true;
+    window.addEventListener('pageshow', function (ev) {
+      scheduleResync(ev.persisted ? 0 : 50);
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) scheduleResync(50);
+    });
+    window.addEventListener('focus', function () {
+      scheduleResync(150);
+    });
+    document.addEventListener(
+      'click',
+      function (e) {
+        var a = e.target && e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        var href = String(a.getAttribute('href') || '');
+        if (/\/account\/(login|logout)|customer_authentication|\/challenge/i.test(href)) {
+          setTimeout(function () {
+            scheduleResync(400);
+          }, 0);
+        }
+      },
+      true
+    );
+  }
+
+  function init() {
     watchCartNetwork();
     watchCheckout();
-    paintCartFromApi();
-    setTimeout(paintCartFromApi, 400);
-    setTimeout(paintCartFromApi, 1200);
+    watchSession();
+    syncPrices();
+    setTimeout(syncPrices, 400);
+    setTimeout(syncPrices, 1500);
+    setTimeout(syncPrices, 3500);
   }
 
   if (document.readyState === 'loading') {
@@ -746,7 +833,17 @@
   var grid = document.getElementById('CollectionProductGrid');
   if (grid && window.MutationObserver) {
     var t = null;
-    new MutationObserver(function () {
+    new MutationObserver(function (mutations) {
+      var relevant = false;
+      for (var i = 0; i < mutations.length; i++) {
+        var target = mutations[i].target;
+        if (target && target.closest && target.closest('.syspricing-card-price, .syspricing-b2b-price')) {
+          continue;
+        }
+        relevant = true;
+        break;
+      }
+      if (!relevant) return;
       clearTimeout(t);
       t = setTimeout(fetchGridPrices, 120);
     }).observe(grid, { childList: true, subtree: true });
