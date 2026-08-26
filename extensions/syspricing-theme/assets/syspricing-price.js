@@ -631,9 +631,13 @@
 
   var cartPaintTimer = null;
   var cartPaintInFlight = false;
+  var cartPaintQueued = false;
+  var cartPaintQueuedOptions = null;
   var suppressCartObs = false;
   var cartLoaderShownAt = 0;
   var cartLoaderHideTimer = null;
+  var cartCheckoutLocked = false;
+  var cartPriceLoadGen = 0;
 
   function isCartOpen() {
     var sidebar = document.querySelector('[data-js-site-cart-sidebar], .sidebar__cart, .sidebar-cart, #sidebar-cart, .drawer--cart');
@@ -697,30 +701,116 @@
     }, wait);
   }
 
-  function scheduleCartRepaints(cart, prices, currency) {
-    [250, 900, 1800, 3000].forEach(function (delay) {
-      setTimeout(function () {
-        paintCart(cart, prices, currency);
-      }, delay);
+  function cartCheckoutControls() {
+    var areas = [
+      document.getElementById('AjaxCartSubtotal'),
+      document.querySelector('[data-js-site-cart-sidebar]'),
+      document.getElementById('AjaxCartForm'),
+      document.querySelector('cart-form'),
+    ];
+    var out = [];
+    var seen = [];
+    function add(el) {
+      if (!el || seen.indexOf(el) !== -1) return;
+      seen.push(el);
+      out.push(el);
+    }
+    for (var a = 0; a < areas.length; a++) {
+      var root = areas[a];
+      if (!root) continue;
+      root.querySelectorAll('#CheckOut, button[name="checkout"], input[name="checkout"]').forEach(add);
+      root.querySelectorAll('a[href*="/checkout"]').forEach(add);
+    }
+    return out;
+  }
+
+  function lockCartCheckout() {
+    cartCheckoutLocked = true;
+    cartCheckoutControls().forEach(function (el) {
+      if (el.getAttribute('data-syspricing-checkout-lock') === '1') return;
+      el.setAttribute('data-syspricing-checkout-lock', '1');
+      if (el.tagName === 'A') {
+        el.setAttribute('data-syspricing-href', el.getAttribute('href') || '');
+        el.removeAttribute('href');
+      } else {
+        el.disabled = true;
+      }
+      el.setAttribute('aria-disabled', 'true');
+      el.classList.add('syspricing-checkout-disabled');
     });
+  }
+
+  function unlockCartCheckout() {
+    cartCheckoutLocked = false;
+    cartCheckoutControls().forEach(function (el) {
+      if (el.getAttribute('data-syspricing-checkout-lock') !== '1') return;
+      el.removeAttribute('data-syspricing-checkout-lock');
+      if (el.tagName === 'A') {
+        var href = el.getAttribute('data-syspricing-href') || '/checkout';
+        el.setAttribute('href', href);
+        el.removeAttribute('data-syspricing-href');
+      } else {
+        el.disabled = false;
+      }
+      el.removeAttribute('aria-disabled');
+      el.classList.remove('syspricing-checkout-disabled');
+    });
+  }
+
+  function startCartPriceSession() {
+    cartPriceLoadGen++;
+    lockCartCheckout();
+    showCartLoader();
+    return cartPriceLoadGen;
+  }
+
+  function finishCartPriceSession(gen) {
+    if (gen != null && gen !== cartPriceLoadGen) return;
+    hideCartLoader();
+    unlockCartCheckout();
+  }
+
+  function scheduleCartRepaints(cart, prices, currency, gen) {
+    var delays = [250, 900, 1800, 3000];
+    var lastDelay = delays[delays.length - 1];
+    for (var i = 0; i < delays.length; i++) {
+      (function (delay) {
+        setTimeout(function () {
+          if (gen != null && gen !== cartPriceLoadGen) return;
+          paintCart(cart, prices, currency);
+          if (gen != null && delay === lastDelay) finishCartPriceSession(gen);
+        }, delay);
+      })(delays[i]);
+    }
   }
 
   function scheduleCartPaint() {
     if (suppressCartObs) return;
     clearTimeout(cartPaintTimer);
+    var gen = isCartOpen() ? startCartPriceSession() : null;
     cartPaintTimer = setTimeout(function () {
-      paintCartFromApi({ showLoader: true });
+      paintCartFromApi({ showLoader: Boolean(gen), loadGen: gen });
     }, 80);
   }
 
   function paintCartFromApi(options) {
     options = options || {};
+    if (cartPaintInFlight) {
+      cartPaintQueued = true;
+      cartPaintQueuedOptions = options;
+      if (isCartOpen()) startCartPriceSession();
+      return Promise.resolve(false);
+    }
+    var loadGen = options.loadGen != null ? options.loadGen : null;
     var showLoader = options.showLoader !== false && (options.forceLoader || isCartOpen());
     var boot = getCartBoot();
-    if (cartPaintInFlight) return Promise.resolve(false);
     var currency = (boot && boot.getAttribute('data-currency')) || 'GTQ';
     cartPaintInFlight = true;
-    if (showLoader) showCartLoader();
+    if (showLoader && loadGen == null) loadGen = startCartPriceSession();
+    else if (showLoader) {
+      lockCartCheckout();
+      showCartLoader();
+    }
 
     return fetch('/cart.js', {
       credentials: 'same-origin',
@@ -739,7 +829,7 @@
           .filter(Boolean);
         if (!ids.length) {
           restoreCartPrices();
-          if (showLoader) hideCartLoader();
+          finishCartPriceSession(loadGen);
           return false;
         }
         return fetchProxyPrices(ids).then(function (body) {
@@ -749,25 +839,32 @@
           try {
             if (hasB2b) {
               paintCart(cart, prices, currency);
-              scheduleCartRepaints(cart, prices, currency);
+              if (loadGen != null) scheduleCartRepaints(cart, prices, currency, loadGen);
+              else scheduleCartRepaints(cart, prices, currency, null);
             } else {
               restoreCartPrices();
+              finishCartPriceSession(loadGen);
             }
           } finally {
             setTimeout(function () {
               suppressCartObs = false;
             }, 3200);
           }
-          if (showLoader) hideCartLoader();
           return hasB2b || session.loggedIn;
         });
       })
       .catch(function () {
-        if (showLoader) hideCartLoader();
+        finishCartPriceSession(loadGen);
         return false;
       })
       .then(function (ok) {
         cartPaintInFlight = false;
+        if (cartPaintQueued) {
+          cartPaintQueued = false;
+          var queued = cartPaintQueuedOptions || {};
+          cartPaintQueuedOptions = null;
+          return paintCartFromApi(queued);
+        }
         return ok;
       });
   }
@@ -872,7 +969,7 @@
   function proceedToB2bCheckout(e) {
     var boot = getCartBoot();
     if (!boot) return false;
-    if (checkoutInFlight) {
+    if (cartCheckoutLocked || checkoutInFlight) {
       e.preventDefault();
       e.stopPropagation();
       return true;

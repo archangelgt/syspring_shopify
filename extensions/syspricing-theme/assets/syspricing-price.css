@@ -110,6 +110,11 @@
   color: #444444;
   letter-spacing: 0.01em;
 }
+.syspricing-checkout-disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+}
 @keyframes syspricing-spin {
   to {
     transform: rotate(360deg);
