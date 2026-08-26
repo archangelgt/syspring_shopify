@@ -637,7 +637,9 @@
   var cartLoaderShownAt = 0;
   var cartLoaderHideTimer = null;
   var cartCheckoutLocked = false;
-  var cartPriceLoadGen = 0;
+  var cartPriceLoading = false;
+  var cartPriceSafetyTimer = null;
+  var cartRepaintBatch = 0;
 
   function isCartOpen() {
     var sidebar = document.querySelector('[data-js-site-cart-sidebar], .sidebar__cart, .sidebar-cart, #sidebar-cart, .drawer--cart');
@@ -687,16 +689,16 @@
   }
 
   function hideCartLoader() {
-    if (!document.querySelector('.syspricing-cart-loader.is-active')) return;
-    var elapsed = Date.now() - cartLoaderShownAt;
-    var wait = Math.max(0, 260 - elapsed);
     clearTimeout(cartLoaderHideTimer);
+    var elapsed = Date.now() - cartLoaderShownAt;
+    var wait = cartLoaderShownAt ? Math.max(0, 200 - elapsed) : 0;
     cartLoaderHideTimer = setTimeout(function () {
-      document.querySelectorAll('.syspricing-cart-loader.is-active').forEach(function (loader) {
+      document.querySelectorAll('.syspricing-cart-loader').forEach(function (loader) {
         loader.classList.remove('is-active');
         loader.setAttribute('aria-busy', 'false');
-        var host = loader.parentElement;
-        if (host) host.classList.remove('syspricing-cart-loading');
+      });
+      document.querySelectorAll('.syspricing-cart-loading').forEach(function (host) {
+        host.classList.remove('syspricing-cart-loading');
       });
     }, wait);
   }
@@ -743,7 +745,9 @@
   function unlockCartCheckout() {
     cartCheckoutLocked = false;
     cartCheckoutControls().forEach(function (el) {
-      if (el.getAttribute('data-syspricing-checkout-lock') !== '1') return;
+      var locked = el.getAttribute('data-syspricing-checkout-lock') === '1';
+      var styled = el.classList.contains('syspricing-checkout-disabled');
+      if (!locked && !styled) return;
       el.removeAttribute('data-syspricing-checkout-lock');
       if (el.tagName === 'A') {
         var href = el.getAttribute('data-syspricing-href') || '/checkout';
@@ -757,28 +761,37 @@
     });
   }
 
-  function startCartPriceSession() {
-    cartPriceLoadGen++;
-    lockCartCheckout();
-    showCartLoader();
-    return cartPriceLoadGen;
-  }
-
-  function finishCartPriceSession(gen) {
-    if (gen != null && gen !== cartPriceLoadGen) return;
+  function setCartPriceLoading(on) {
+    if (on) {
+      if (!cartPriceLoading) {
+        cartPriceLoading = true;
+        lockCartCheckout();
+        showCartLoader();
+      }
+      clearTimeout(cartPriceSafetyTimer);
+      cartPriceSafetyTimer = setTimeout(function () {
+        setCartPriceLoading(false);
+      }, 4500);
+      return;
+    }
+    if (!cartPriceLoading) return;
+    cartPriceLoading = false;
+    clearTimeout(cartPriceSafetyTimer);
     hideCartLoader();
     unlockCartCheckout();
   }
 
-  function scheduleCartRepaints(cart, prices, currency, gen) {
+  function scheduleCartRepaints(cart, prices, currency, onDone) {
+    cartRepaintBatch++;
+    var batch = cartRepaintBatch;
     var delays = [250, 900, 1800, 3000];
     var lastDelay = delays[delays.length - 1];
     for (var i = 0; i < delays.length; i++) {
       (function (delay) {
         setTimeout(function () {
-          if (gen != null && gen !== cartPriceLoadGen) return;
+          if (batch !== cartRepaintBatch) return;
           paintCart(cart, prices, currency);
-          if (gen != null && delay === lastDelay) finishCartPriceSession(gen);
+          if (onDone && delay === lastDelay && batch === cartRepaintBatch) onDone();
         }, delay);
       })(delays[i]);
     }
@@ -787,9 +800,9 @@
   function scheduleCartPaint() {
     if (suppressCartObs) return;
     clearTimeout(cartPaintTimer);
-    var gen = isCartOpen() ? startCartPriceSession() : null;
+    if (isCartOpen()) setCartPriceLoading(true);
     cartPaintTimer = setTimeout(function () {
-      paintCartFromApi({ showLoader: Boolean(gen), loadGen: gen });
+      paintCartFromApi({ trackLoading: isCartOpen() });
     }, 80);
   }
 
@@ -798,19 +811,13 @@
     if (cartPaintInFlight) {
       cartPaintQueued = true;
       cartPaintQueuedOptions = options;
-      if (isCartOpen()) startCartPriceSession();
       return Promise.resolve(false);
     }
-    var loadGen = options.loadGen != null ? options.loadGen : null;
-    var showLoader = options.showLoader !== false && (options.forceLoader || isCartOpen());
+    var trackLoading = options.trackLoading !== false && isCartOpen();
     var boot = getCartBoot();
     var currency = (boot && boot.getAttribute('data-currency')) || 'GTQ';
     cartPaintInFlight = true;
-    if (showLoader && loadGen == null) loadGen = startCartPriceSession();
-    else if (showLoader) {
-      lockCartCheckout();
-      showCartLoader();
-    }
+    if (trackLoading) setCartPriceLoading(true);
 
     return fetch('/cart.js', {
       credentials: 'same-origin',
@@ -829,7 +836,7 @@
           .filter(Boolean);
         if (!ids.length) {
           restoreCartPrices();
-          finishCartPriceSession(loadGen);
+          if (trackLoading) setCartPriceLoading(false);
           return false;
         }
         return fetchProxyPrices(ids).then(function (body) {
@@ -839,11 +846,16 @@
           try {
             if (hasB2b) {
               paintCart(cart, prices, currency);
-              if (loadGen != null) scheduleCartRepaints(cart, prices, currency, loadGen);
-              else scheduleCartRepaints(cart, prices, currency, null);
+              if (trackLoading) {
+                scheduleCartRepaints(cart, prices, currency, function () {
+                  setCartPriceLoading(false);
+                });
+              } else {
+                scheduleCartRepaints(cart, prices, currency, null);
+              }
             } else {
               restoreCartPrices();
-              finishCartPriceSession(loadGen);
+              if (trackLoading) setCartPriceLoading(false);
             }
           } finally {
             setTimeout(function () {
@@ -854,7 +866,7 @@
         });
       })
       .catch(function () {
-        finishCartPriceSession(loadGen);
+        if (trackLoading) setCartPriceLoading(false);
         return false;
       })
       .then(function (ok) {
@@ -969,7 +981,7 @@
   function proceedToB2bCheckout(e) {
     var boot = getCartBoot();
     if (!boot) return false;
-    if (cartCheckoutLocked || checkoutInFlight) {
+    if (cartCheckoutLocked || cartPriceLoading || checkoutInFlight) {
       e.preventDefault();
       e.stopPropagation();
       return true;
@@ -1106,7 +1118,9 @@
       if (!el || el.getAttribute('data-syspricing-drawer-watch') === '1') return;
       el.setAttribute('data-syspricing-drawer-watch', '1');
       new MutationObserver(function () {
-        if (isCartOpen()) scheduleCartPaint();
+        if (!isCartOpen()) return;
+        clearTimeout(el._syspricingDrawerPaint);
+        el._syspricingDrawerPaint = setTimeout(scheduleCartPaint, 120);
       }).observe(el, { attributes: true, attributeFilter: ['class', 'aria-hidden'] });
     }
     document.querySelectorAll('[data-js-site-cart-sidebar], .sidebar__cart, .sidebar-cart, #sidebar-cart, .drawer--cart').forEach(bindSidebar);
@@ -1193,7 +1207,7 @@
       if (!relevant) return;
       clearTimeout(cartObsT);
       cartObsT = setTimeout(function () {
-        paintCartFromApi({ showLoader: false });
+        paintCartFromApi({ trackLoading: false });
       }, 250);
     }).observe(document.body, { childList: true, subtree: true });
   }
