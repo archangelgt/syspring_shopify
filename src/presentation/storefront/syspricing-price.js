@@ -76,11 +76,33 @@
     return data;
   }
 
+  var priceCache = { key: '', at: 0, body: null };
+  var PRICE_CACHE_MS = 20000;
+
+  function customerTagsFromBoot(boot) {
+    var el = boot || getBoot();
+    if (!el) return '';
+    return String(el.getAttribute('data-customer-tags') || '')
+      .split(',')
+      .map(function (t) {
+        return t.trim();
+      })
+      .filter(Boolean)
+      .join(',');
+  }
+
   function fetchProxyPrices(variantIds) {
+    var ids = (variantIds || []).map(String).filter(Boolean);
+    var key = ids.slice().sort().join(',');
+    if (priceCache.key === key && priceCache.body && Date.now() - priceCache.at < PRICE_CACHE_MS) {
+      return Promise.resolve(priceCache.body);
+    }
     var boot = getBoot();
     var proxy = (boot && boot.getAttribute('data-proxy')) || '/apps/syspricing/prices';
     var params = new URLSearchParams();
-    params.set('variant_ids', variantIds.join(','));
+    params.set('variant_ids', ids.join(','));
+    var tags = customerTagsFromBoot(boot);
+    if (tags) params.set('tags', tags);
     var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
     return fetch(url, {
       credentials: 'same-origin',
@@ -91,6 +113,7 @@
       return r.json();
     }).then(function (body) {
       rememberSession(body);
+      priceCache = { key: key, at: Date.now(), body: body };
       return body;
     });
   }
@@ -536,11 +559,38 @@
   }
 
   function cartItemRows() {
-    var list = document.querySelectorAll('#AjaxCartForm [data-js-cart-item], cart-form [data-js-cart-item]');
+    var list = document.querySelectorAll(
+      '#AjaxCartForm [data-js-cart-item], cart-form [data-js-cart-item], #cart [data-js-cart-item], .cart-page-items [data-js-cart-item], [data-js-cart-item]'
+    );
     if (list.length) return Array.prototype.slice.call(list);
-    var wrap = document.querySelector('#AjaxCartForm .cart__items, cart-form .cart__items, form.cart__form .cart__items, .cart__items');
+    var wrap = document.querySelector(
+      '#AjaxCartForm .cart__items, cart-form .cart__items, form.cart__form .cart__items, #cart .cart__items, .cart-page-items .cart__items, .cart__items'
+    );
     if (!wrap) return [];
-    return Array.prototype.slice.call(wrap.children);
+    return Array.prototype.slice.call(wrap.children).filter(function (el) {
+      return el && el.nodeType === 1;
+    });
+  }
+
+  function paintAllCartTotals(catalogMajor, b2bMajor, currency) {
+    var nodes = [
+      document.getElementById('CartTotal'),
+      document.querySelector('#AjaxCartSubtotal #CartTotal'),
+      document.querySelector('.cart-page-footer #CartTotal'),
+      document.querySelector('.wcp-original-cart-total'),
+      document.querySelector('[data-wpd-cart-total]'),
+      document.querySelector('.cart__footer .h1'),
+    ];
+    var seen = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!el || seen.indexOf(el) !== -1) continue;
+      seen.push(el);
+      // Prefer painting the visible CartTotal paragraph, not nested WCP spans alone.
+      var host = el.id === 'CartTotal' || (el.classList && el.classList.contains('h1')) ? el : el.closest('#CartTotal, .h1') || el;
+      if (seen.indexOf(host) === -1) seen.push(host);
+      paintCartTotalElement(host, catalogMajor, b2bMajor, currency);
+    }
   }
 
   function findItemRow(item, index) {
@@ -605,14 +655,20 @@
     for (var i = 0; i < cart.items.length; i++) {
       var item = cart.items[i];
       var qty = Math.max(1, Number(item.quantity) || 1);
-      var catalogUnit = Number(item.original_price != null ? item.original_price : item.price) / 100;
+      // Always use pre-discount catalog unit so SP coupons never corrupt the strike price.
+      var catalogUnit =
+        Number(
+          item.original_price != null
+            ? item.original_price
+            : item.price_original != null
+              ? item.price_original
+              : item.price
+        ) / 100;
       var info = pickPrice(priceMap, item.variant_id);
       var b2bUnit =
         info && info.price != null
           ? Number(info.price)
-          : item.final_price != null && Number(item.final_price) < Number(item.price)
-            ? Number(item.final_price) / 100
-            : catalogUnit;
+          : catalogUnit;
       catalogSubtotal += catalogUnit * qty;
       b2bSubtotal += b2bUnit * qty;
       if (!Number.isFinite(b2bUnit) || b2bUnit >= catalogUnit) continue;
@@ -620,13 +676,62 @@
       var row = findItemRow(item, i);
       if (!row) continue;
       paintRowPrices(row, catalogUnit, qty, b2bUnit, currency);
+      hideNativeDiscountNoise(row);
     }
 
     if (b2bSubtotal < catalogSubtotal) {
       lastB2bCartTotal = b2bSubtotal;
       lastCatalogCartTotal = catalogSubtotal;
-      paintCartTotalElement(document.getElementById('CartTotal'), catalogSubtotal, b2bSubtotal, currency);
+      paintAllCartTotals(catalogSubtotal, b2bSubtotal, currency);
     }
+  }
+
+  function hideNativeDiscountNoise(root) {
+    var scope = root || document;
+    var nodes = scope.querySelectorAll
+      ? scope.querySelectorAll('span, small, div, p, li')
+      : [];
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!el || el.children.length) continue;
+      var t = String(el.textContent || '');
+      if (/Descuento:\s*SP/i.test(t) || /^SP[0-9A-F]{6,}$/i.test(t.trim())) {
+        el.classList.add('syspricing-hide-discount');
+      }
+    }
+  }
+
+  function cartHasSpDiscount(cart) {
+    if (!cart) return false;
+    var apps = cart.cart_level_discount_applications || [];
+    for (var i = 0; i < apps.length; i++) {
+      if (/^SP[0-9A-F]/i.test(String(apps[i].title || apps[i].code || ''))) return true;
+    }
+    var items = cart.items || [];
+    for (var j = 0; j < items.length; j++) {
+      var lineApps = items[j].line_level_discount_allocations || [];
+      for (var k = 0; k < lineApps.length; k++) {
+        var a = lineApps[k].discount_application || lineApps[k];
+        var title = String((a && (a.title || a.code)) || '');
+        if (/^SP[0-9A-F]/i.test(title) || /Precio Especial/i.test(title)) return true;
+      }
+    }
+    return false;
+  }
+
+  function clearCartDiscounts() {
+    return fetch('/cart/update.js', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ discount: '' }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .catch(function () {
+        return null;
+      });
   }
 
   var cartPaintTimer = null;
@@ -762,20 +867,9 @@
   }
 
   function setCartPriceLoading(on) {
-    if (on) {
-      if (!cartPriceLoading) {
-        cartPriceLoading = true;
-        lockCartCheckout();
-        showCartLoader();
-      }
-      clearTimeout(cartPriceSafetyTimer);
-      cartPriceSafetyTimer = setTimeout(function () {
-        setCartPriceLoading(false);
-      }, 4500);
-      return;
-    }
-    if (!cartPriceLoading) return;
+    // No dimmed overlay / locked checkout — prices paint silently from cache/proxy.
     cartPriceLoading = false;
+    cartCheckoutLocked = false;
     clearTimeout(cartPriceSafetyTimer);
     hideCartLoader();
     unlockCartCheckout();
@@ -784,26 +878,20 @@
   function scheduleCartRepaints(cart, prices, currency, onDone) {
     cartRepaintBatch++;
     var batch = cartRepaintBatch;
-    var delays = [250, 900, 1800, 3000];
-    var lastDelay = delays[delays.length - 1];
-    for (var i = 0; i < delays.length; i++) {
-      (function (delay) {
-        setTimeout(function () {
-          if (batch !== cartRepaintBatch) return;
-          paintCart(cart, prices, currency);
-          if (onDone && delay === lastDelay && batch === cartRepaintBatch) onDone();
-        }, delay);
-      })(delays[i]);
-    }
+    paintCart(cart, prices, currency);
+    setTimeout(function () {
+      if (batch !== cartRepaintBatch) return;
+      paintCart(cart, prices, currency);
+      if (onDone) onDone();
+    }, 180);
   }
 
   function scheduleCartPaint() {
     if (suppressCartObs) return;
     clearTimeout(cartPaintTimer);
-    if (isCartOpen()) setCartPriceLoading(true);
     cartPaintTimer = setTimeout(function () {
-      paintCartFromApi({ trackLoading: isCartOpen() });
-    }, 80);
+      paintCartFromApi({});
+    }, 60);
   }
 
   function paintCartFromApi(options) {
@@ -813,11 +901,10 @@
       cartPaintQueuedOptions = options;
       return Promise.resolve(false);
     }
-    var trackLoading = options.trackLoading !== false && isCartOpen();
+    var trackLoading = false;
     var boot = getCartBoot();
     var currency = (boot && boot.getAttribute('data-currency')) || 'GTQ';
     cartPaintInFlight = true;
-    if (trackLoading) setCartPriceLoading(true);
 
     return fetch('/cart.js', {
       credentials: 'same-origin',
@@ -829,6 +916,14 @@
         return r.json();
       })
       .then(function (cart) {
+        if (cartHasSpDiscount(cart)) {
+          return clearCartDiscounts().then(function (cleared) {
+            return cleared || cart;
+          });
+        }
+        return cart;
+      })
+      .then(function (cart) {
         var ids = (cart.items || [])
           .map(function (it) {
             return it.variant_id;
@@ -836,7 +931,6 @@
           .filter(Boolean);
         if (!ids.length) {
           restoreCartPrices();
-          if (trackLoading) setCartPriceLoading(false);
           return false;
         }
         return fetchProxyPrices(ids).then(function (body) {
@@ -846,27 +940,19 @@
           try {
             if (hasB2b) {
               paintCart(cart, prices, currency);
-              if (trackLoading) {
-                scheduleCartRepaints(cart, prices, currency, function () {
-                  setCartPriceLoading(false);
-                });
-              } else {
-                scheduleCartRepaints(cart, prices, currency, null);
-              }
+              scheduleCartRepaints(cart, prices, currency, null);
             } else {
               restoreCartPrices();
-              if (trackLoading) setCartPriceLoading(false);
             }
           } finally {
             setTimeout(function () {
               suppressCartObs = false;
-            }, 3200);
+            }, 500);
           }
           return hasB2b || session.loggedIn;
         });
       })
       .catch(function () {
-        if (trackLoading) setCartPriceLoading(false);
         return false;
       })
       .then(function (ok) {
@@ -927,30 +1013,70 @@
     return String(pricesProxy || '/apps/syspricing/prices').replace(/\/prices\/?$/, '/checkout-discount');
   }
 
-  function goToCheckout(codes) {
+  function goToCheckout(codes, expectedB2b) {
     var list = Array.isArray(codes) ? codes.filter(Boolean) : codes ? [codes] : [];
     if (!list.length) {
       window.location.href = '/checkout';
       return;
     }
-    if (list.length === 1) {
-      window.location.href =
-        '/discount/' + encodeURIComponent(list[0]) + '?redirect=' + encodeURIComponent('/checkout');
-      return;
+
+    function nestedRedirect() {
+      var target = '/checkout';
+      for (var i = list.length - 1; i >= 0; i--) {
+        target =
+          '/discount/' + encodeURIComponent(list[i]) + '?redirect=' + encodeURIComponent(target);
+      }
+      window.location.href = target;
     }
-    fetch('/cart/update.js', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ discount: list.join(',') }),
-    })
-      .catch(function () {})
+
+    function checkoutWithQuery() {
+      window.location.href =
+        '/checkout?discount=' + list.map(function (c) { return encodeURIComponent(c); }).join(',');
+    }
+
+    clearCartDiscounts()
       .then(function () {
-        window.location.href = '/checkout';
+        if (list.length === 1) {
+          window.location.href =
+            '/discount/' +
+            encodeURIComponent(list[0]) +
+            '?redirect=' +
+            encodeURIComponent('/checkout');
+          return null;
+        }
+        return fetch('/cart/update.js', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ discount: list.join(',') }),
+        }).then(function (r) {
+          return r.json();
+        });
+      })
+      .then(function (cart) {
+        if (cart == null) return;
+        var total = Number(cart.total_price) / 100;
+        if (
+          expectedB2b != null &&
+          Number.isFinite(Number(expectedB2b)) &&
+          Math.abs(total - Number(expectedB2b)) < 0.05
+        ) {
+          window.location.href = '/checkout';
+          return;
+        }
+        // Comma apply incomplete — try checkout ?discount= then nested hops.
+        try {
+          checkoutWithQuery();
+        } catch (_) {
+          nestedRedirect();
+        }
+      })
+      .catch(function () {
+        nestedRedirect();
       });
   }
 
-  function requestCheckoutCode(cart, boot) {
+  function requestCheckoutCode(cart, boot, pool) {
     var proxy = checkoutDiscountUrl(
       (boot && boot.getAttribute('data-proxy')) || '/apps/syspricing/prices'
     );
@@ -961,6 +1087,9 @@
       .join(',');
     var params = new URLSearchParams();
     params.set('lines', lines);
+    if (pool) params.set('pool', '1');
+    var tags = customerTagsFromBoot(boot);
+    if (tags) params.set('tags', tags);
     var url = proxy + (proxy.indexOf('?') >= 0 ? '&' : '?') + params.toString();
     return fetch(url, {
       credentials: 'same-origin',
@@ -972,16 +1101,21 @@
       })
       .then(function (body) {
         var data = (body && body.data) || {};
-        if (data.ok && Array.isArray(data.codes) && data.codes.length) return data.codes;
-        if (data.ok && data.code) return [data.code];
-        return [];
+        var codes = [];
+        if (data.ok && Array.isArray(data.codes) && data.codes.length) codes = data.codes;
+        else if (data.ok && data.code) codes = [data.code];
+        return {
+          codes: codes,
+          b2bTotal: data.b2bTotal != null ? Number(data.b2bTotal) : null,
+          amount: data.amount != null ? Number(data.amount) : null,
+        };
       });
   }
 
   function proceedToB2bCheckout(e) {
     var boot = getCartBoot();
     if (!boot) return false;
-    if (cartCheckoutLocked || cartPriceLoading || checkoutInFlight) {
+    if (checkoutInFlight) {
       e.preventDefault();
       e.stopPropagation();
       return true;
@@ -990,15 +1124,17 @@
     e.preventDefault();
     e.stopPropagation();
     var done = false;
-    function finish(codes) {
+    function finish(payload) {
       if (done) return;
       done = true;
       clearTimeout(timeout);
-      goToCheckout(codes);
+      var codes = payload && payload.codes ? payload.codes : [];
+      var b2b = payload && payload.b2bTotal != null ? payload.b2bTotal : lastB2bCartTotal;
+      goToCheckout(codes, b2b);
     }
     var timeout = setTimeout(function () {
-      finish([]);
-    }, 12000);
+      finish({ codes: [], b2bTotal: lastB2bCartTotal });
+    }, 20000);
     fetch('/cart.js', {
       credentials: 'same-origin',
       cache: 'no-store',
@@ -1009,15 +1145,15 @@
       })
       .then(function (cart) {
         if (!cart || !cart.items || !cart.items.length) {
-          finish([]);
+          finish({ codes: [] });
           return;
         }
-        return requestCheckoutCode(cart, boot).then(function (codes) {
-          finish(codes);
+        return requestCheckoutCode(cart, boot, false).then(function (payload) {
+          finish(payload);
         });
       })
       .catch(function () {
-        finish([]);
+        finish({ codes: [] });
       });
     return true;
   }
@@ -1141,15 +1277,44 @@
     }).observe(document.body, { childList: true, subtree: true });
   }
 
+  var ASSET_V = '28';
+
+  function ensureBootAndStyles() {
+    if (!document.getElementById('syspricing-cart-boot') && !document.getElementById('syspricing-collection-boot')) {
+      var boot = document.createElement('div');
+      boot.id = 'syspricing-cart-boot';
+      boot.hidden = true;
+      boot.setAttribute('data-proxy', '/apps/syspricing/prices');
+      boot.setAttribute('data-currency', 'GTQ');
+      boot.setAttribute('data-logged-in', '0');
+      (document.body || document.documentElement).appendChild(boot);
+    }
+    if (!document.querySelector('link[href*="syspricing-price.css"]')) {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href =
+        'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=' + ASSET_V;
+      (document.head || document.documentElement).appendChild(link);
+    }
+  }
+
   function init() {
+    ensureBootAndStyles();
     watchCartNetwork();
     watchCheckout();
     watchSession();
     watchCartDrawer();
     syncPrices();
     setTimeout(syncPrices, 400);
-    setTimeout(syncPrices, 1500);
-    setTimeout(syncPrices, 3500);
+    setTimeout(syncPrices, 1200);
+    if (/\/cart\/?$/.test(String(window.location.pathname || ''))) {
+      setTimeout(syncPrices, 2000);
+      setTimeout(syncPrices, 3500);
+      window.addEventListener('load', function () {
+        syncPrices();
+        setTimeout(syncPrices, 500);
+      });
+    }
   }
 
   if (document.readyState === 'loading') {
@@ -1177,6 +1342,24 @@
       t = setTimeout(fetchGridPrices, 120);
     }).observe(grid, { childList: true, subtree: true });
   }
+  function isCartUiNode(node) {
+    if (!node || !node.closest) return false;
+    return Boolean(
+      node.closest(
+        '[data-js-site-cart-sidebar], .sidebar__cart, .sidebar-cart, #sidebar-cart, .drawer--cart, #AjaxCartForm, cart-form, #CartDrawer, .cart-drawer, #CartTotal, .cart-page-items, .cart-page-footer, #cart, form[action="/cart"], form[action="/cart/"]'
+      )
+    );
+  }
+
+  function isSyspricingPaintNode(node) {
+    if (!node || !node.closest) return false;
+    return Boolean(
+      node.closest(
+        '.syspricing-card-price, .syspricing-b2b-price, .syspricing-cart-price, .syspricing-cart-loader, .syspricing-cart-loading, .syspricing-checkout-disabled'
+      )
+    );
+  }
+
   if (window.MutationObserver && !window.__SYSPRICING_CART_OBS) {
     window.__SYSPRICING_CART_OBS = true;
     var cartObsT = null;
@@ -1186,21 +1369,8 @@
       for (var i = 0; i < mutations.length; i++) {
         var m = mutations[i];
         var t = m.target;
-        if (t && t.closest && t.closest('.syspricing-card-price, .syspricing-b2b-price')) {
-          continue;
-        }
-        if (t && t.closest && t.closest('.syspricing-cart-loader, .syspricing-cart-loading')) {
-          continue;
-        }
-        if (
-          t &&
-          t.closest &&
-          t.closest('.syspricing-cart-price') &&
-          lastB2bCartTotal != null &&
-          amountsEqual(parseMoneyText((document.getElementById('CartTotal') || {}).textContent || ''), lastB2bCartTotal)
-        ) {
-          continue;
-        }
+        if (isSyspricingPaintNode(t)) continue;
+        if (!isCartUiNode(t)) continue;
         relevant = true;
         break;
       }
@@ -1208,7 +1378,7 @@
       clearTimeout(cartObsT);
       cartObsT = setTimeout(function () {
         paintCartFromApi({ trackLoading: false });
-      }, 250);
+      }, 400);
     }).observe(document.body, { childList: true, subtree: true });
   }
 })();

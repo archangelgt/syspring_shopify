@@ -18,6 +18,7 @@ const { ensureMetafieldDefinitions } = require('./infrastructure/shopify/metafie
 const { createDiscountSetup } = require('./infrastructure/shopify/discountSetup');
 const { createCustomersAdmin } = require('./infrastructure/shopify/customersAdmin');
 const { createProductsAdmin } = require('./infrastructure/shopify/productsAdmin');
+const { ensureThemeCartBoot } = require('./infrastructure/shopify/themeBoot');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = (process.env.HOST || process.env.SHOPIFY_APP_URL || 'https://app.example.com').replace(
@@ -27,7 +28,7 @@ const HOST = (process.env.HOST || process.env.SHOPIFY_APP_URL || 'https://app.ex
 const APP_TITLE = process.env.APP_TITLE || 'SysPricing';
 const APP_SUBTITLE = process.env.APP_SUBTITLE || 'B2B Price Engine';
 const DEFAULT_SCOPES =
-  'read_products,write_products,read_customers,write_customers,read_discounts,write_discounts';
+  'read_products,write_products,read_customers,write_customers,read_discounts,write_discounts,read_orders,write_orders,read_themes,write_themes';
 const SCOPES = (process.env.SCOPES || DEFAULT_SCOPES)
   .split(',')
   .map((s) => s.trim())
@@ -129,8 +130,10 @@ function customInstallUrl(shop) {
 }
 
 function renderAuthorizeBreakout(res, shop, host) {
-  const authFull = `${HOST}${authUrlForShop(shop, host)}&breakout=1`;
-  const installFull = customInstallUrl(shop);
+  // Custom-distribution apps reject unsigned install_custom_app links (Oauth error invalid_link).
+  // Reauth of an already-installed shop must use the normal /auth OAuth flow.
+  const authFull = `${HOST}${authUrlForShop(shop, host)}`;
+  const authBreakout = `${authFull}${authFull.includes('?') ? '&' : '?'}breakout=1`;
   setEmbeddedCsp(res, shop);
   res.status(200).type('html').send(`<!DOCTYPE html>
 <html lang="es">
@@ -150,23 +153,21 @@ function renderAuthorizeBreakout(res, shop, host) {
       display:inline-block; margin-top:1rem; padding:0.75rem 1.25rem; background:var(--accent); color:#fff;
       font-weight:700; text-decoration:none; border-radius:8px; font-size:1rem;
     }
-    .btn.secondary { background:#5c6ac4; margin-left:0.35rem; }
     code { background:#f1f2f3; padding:0.1rem 0.35rem; border-radius:4px; font-size:0.85em; }
   </style>
 </head>
 <body>
   <div class="box">
     <h1>Autorizar ${escapeHtml(APP_TITLE)}</h1>
-    <p>Hay que salir del iframe del Admin para autorizar.</p>
+    <p>Hay que salir del iframe del Admin para autorizar los permisos.</p>
     <p>Tienda: <code>${escapeHtml(shop)}</code></p>
     <p>
-      <a class="btn" id="auth-link" href="${escapeHtml(installFull)}" target="_top" rel="noopener">Instalar en Admin</a>
-      <a class="btn secondary" href="${escapeHtml(authFull)}" target="_top" rel="noopener">OAuth directo</a>
+      <a class="btn" id="auth-link" href="${escapeHtml(authBreakout)}" target="_top" rel="noopener">Autorizar app</a>
     </p>
   </div>
   <script>
     (function () {
-      var url = ${JSON.stringify(installFull)};
+      var url = ${JSON.stringify(authBreakout)};
       var host = ${JSON.stringify(host || '')};
       var apiKey = ${JSON.stringify(API_KEY)};
       function goTop(u) {
@@ -338,17 +339,35 @@ bootstrap()
         const q = new URLSearchParams({
           shop: shop || shopRaw,
           host: host || hostRaw,
-          redirectUri: customInstallUrl(shop || shopRaw),
+          redirectUri: `${HOST}/auth?shop=${encodeURIComponent(shop || shopRaw)}&breakout=1&reauth=1`,
         });
         return res.redirect(302, `/exitiframe?${q.toString()}`);
+      }
+      // shopify-api returns 410 for bot/curl UAs — force a browser UA so OAuth works.
+      const ua = String(req.headers['user-agent'] || '');
+      if (!ua || /bot|curl|wget|python|httpie|scrapy|headless/i.test(ua)) {
+        req.headers['user-agent'] =
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
       }
       return shopify.auth.begin()(req, res, next);
     });
     app.get(
       shopify.config.auth.callbackPath,
       shopify.auth.callback(),
-      async (_req, _res) => {
+      async (req, res, next) => {
         console.log('[auth] OAuth ok');
+        try {
+          const shopRaw = typeof req.query.shop === 'string' ? req.query.shop : '';
+          const shop = shopify.api.utils.sanitizeShop(shopRaw) || normalizeShop(shopRaw);
+          const client = shop ? await getAdminClient(shop) : null;
+          if (client) {
+            const boot = await ensureThemeCartBoot(client);
+            console.log('[auth] theme boot', JSON.stringify(boot));
+          }
+        } catch (err) {
+          console.error('[auth] theme boot failed', err.message);
+        }
+        next();
       },
       shopify.redirectToShopifyOrAppRoot()
     );

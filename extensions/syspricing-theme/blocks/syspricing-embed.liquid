@@ -1,6 +1,6 @@
 {% comment %}
-  App embed — loads B2B helper on every page so login/logout refreshes prices.
-  Enable in Theme settings → App embeds → SYSPRICING cart B2B.
+  App embed — loads B2B helper on EVERY page (cart page, drawer, PDP, collections).
+  Theme settings → App embeds → SYSPRICING cart B2B → enable → Save.
 {% endcomment %}
 <div
   id="syspricing-cart-boot"
@@ -11,13 +11,13 @@
   data-proxy="/apps/syspricing/prices"
   data-currency="{{ cart.currency.iso_code | default: shop.currency }}"
 ></div>
-<script src="{{ 'syspricing-price.js' | asset_url }}" defer></script>
+{{ 'https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.css?v=28' | stylesheet_tag }}
+<script src="https://syspricing.shopify.somosface.erpsys.pro/storefront/syspricing-price.js?v=28" defer></script>
 
 {% schema %}
 {
   "name": "SYSPRICING cart B2B",
   "target": "body",
-  "stylesheet": "syspricing-price.css",
   "settings": []
 }
 {% endschema %}

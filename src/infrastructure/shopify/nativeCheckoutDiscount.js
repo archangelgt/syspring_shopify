@@ -8,13 +8,12 @@ const MAX_COMBINABLE_CODES = 5;
 /**
  * Native Shopify discount codes (not Functions). Works on non-Plus + custom apps.
  *
- * One Basic code can only carry a single amount. If we pool mixed B2B offs into
- * one code, Shopify prorates by catalog price and every Q499 item lands on the
- * same cents (e.g. Q284.12) instead of 260 / 275 / 295 / 310.
- * Group by per-unit off and issue one combinable code per group.
+ * One Basic code = one amount. Mixed B2B offs → one code per unit-off group with
+ * appliesOnEachItem so checkout line prices match B2B exactly (no proration).
+ * Frontend must apply ALL returned codes in one shot.
  */
 function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
-  async function createForCart(shop, { customerId, tags, lines }) {
+  async function createForCart(shop, { customerId, tags, lines, pool } = {}) {
     const client = await getAdminClient(shop);
     if (!client) return { ok: false, reason: 'NO_SESSION' };
 
@@ -23,6 +22,8 @@ function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
 
     const catalogById = await fetchCatalogPrices(client, parsed.map((l) => l.variantGid));
     let amount = 0;
+    let catalogTotal = 0;
+    let b2bTotal = 0;
     const breakdown = [];
 
     for (const line of parsed) {
@@ -35,6 +36,8 @@ function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
       const b2b =
         resolved.reason === 'ok' && resolved.price != null ? Number(resolved.price) : catalog;
       const unitOff = Math.max(0, roundMoney(catalog - b2b));
+      catalogTotal = roundMoney(catalogTotal + catalog * line.qty);
+      b2bTotal = roundMoney(b2bTotal + b2b * line.qty);
       if (unitOff <= 0) continue;
       const lineOff = roundMoney(unitOff * line.qty);
       amount = roundMoney(amount + lineOff);
@@ -49,10 +52,24 @@ function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
       });
     }
 
-    if (amount < 0.01 || !breakdown.length) return { ok: true, skipped: true, amount: 0 };
+    if (amount < 0.01 || !breakdown.length) {
+      return { ok: true, skipped: true, amount: 0, catalogTotal, b2bTotal };
+    }
 
-    const groups = groupLinesByUnitOff(breakdown);
     const customerGid = toCustomerGid(customerId);
+    const forcePool = pool === true || pool === '1' || pool === 1;
+    const groups = forcePool
+      ? [
+          {
+            unitOff: 'pooled',
+            appliesOnEachItem: false,
+            variantGids: [...new Set(breakdown.map((r) => r.variantGid))],
+            pooledAmount: amount,
+            lineCount: breakdown.reduce((n, r) => n + r.qty, 0),
+          },
+        ]
+      : groupLinesByUnitOff(breakdown);
+
     const codes = [];
     const discountIds = [];
     let lastErrors = [];
@@ -61,8 +78,8 @@ function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
       const created = await createOneCode(client, {
         customerGid,
         variantGids: group.variantGids,
-        discountAmount: group.appliesOnEachItem ? group.unitOff : group.pooledAmount.toFixed(2),
-        appliesOnEachItem: group.appliesOnEachItem,
+        discountAmount: group.appliesOnEachItem ? group.unitOff : Number(group.pooledAmount).toFixed(2),
+        appliesOnEachItem: Boolean(group.appliesOnEachItem),
       });
       if (created.ok) {
         codes.push(created.code);
@@ -78,6 +95,9 @@ function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
         reason: 'CREATE_FAILED',
         errors: lastErrors,
         hint: lastErrors.map((e) => e.message).join('; ') || 'discountCodeBasicCreate failed',
+        catalogTotal,
+        b2bTotal,
+        amount,
       };
     }
 
@@ -86,8 +106,11 @@ function createNativeCheckoutDiscount({ getAdminClient, useCases }) {
       code: codes[0],
       codes,
       amount,
+      catalogTotal,
+      b2bTotal,
       appliesOnEachItem: groups.length === 1 && groups[0].appliesOnEachItem,
       groups: groups.length,
+      pooled: forcePool || groups.some((g) => !g.appliesOnEachItem),
       breakdown,
       discountId: discountIds[0] || null,
       discountIds,
@@ -104,21 +127,23 @@ async function createOneCode(client, { customerGid, variantGids, discountAmount,
     items: { products: { productVariantsToAdd: [...new Set(variantGids)] } },
   };
   const base = {
-    title: `Precio Especial ${code}`,
+    title: 'Precio Especial',
     code,
     startsAt: new Date().toISOString(),
     endsAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
     usageLimit: 1,
-    appliesOncePerCustomer: Boolean(customerGid),
+    appliesOncePerCustomer: false,
     customerGets,
     combinesWith: {
-      orderDiscounts: false,
+      orderDiscounts: true,
       productDiscounts: true,
       shippingDiscounts: true,
     },
   };
 
+  // Prefer open one-shot codes so every hop/apply succeeds (still usageLimit: 1).
   const attempts = [
+    { ...base, context: { all: 'ALL' } },
     {
       ...base,
       context: customerGid ? { customers: { add: [customerGid] } } : { all: 'ALL' },
@@ -198,7 +223,7 @@ function groupLinesByUnitOff(rows, maxCodes = MAX_COMBINABLE_CODES) {
     unitOff: rest.map((g) => g.unitOff).join('|'),
     appliesOnEachItem: false,
     variantGids: [...new Set(rest.flatMap((g) => g.variantGids))],
-    pooledAmount: roundMoney(rest.reduce((sum, g) => sum + g.pooledAmount, 0)),
+    pooledAmount: roundMoney(rest.reduce((sum, g) => g.pooledAmount + sum, 0)),
     lineCount: rest.reduce((sum, g) => sum + g.lineCount, 0),
   });
   return keep;

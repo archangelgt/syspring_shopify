@@ -160,6 +160,7 @@ function createProxyRouter({ useCases, customersAdmin, getAdminClient, apiSecret
         customerId,
         tags,
         lines,
+        pool: req.query.pool,
       });
 
       console.log('[proxy/checkout-discount]', {

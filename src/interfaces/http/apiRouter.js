@@ -2,6 +2,8 @@
 
 const express = require('express');
 const { DomainError } = require('../../domain/errors');
+const { ensureThemeCartBoot, embedActivateUrl } = require('../../infrastructure/shopify/themeBoot');
+const { ensureStorefrontScriptTag } = require('../../infrastructure/shopify/scriptTagSetup');
 
 function createApiRouter({
   useCases,
@@ -275,15 +277,34 @@ function createApiRouter({
         });
       }
 
+      const themeBoot = await ensureThemeCartBoot(client).catch((err) => ({
+        ok: false,
+        reason: 'THEME_BOOT_ERROR',
+        error: err.message,
+      }));
+
+      const scriptTag = await ensureStorefrontScriptTag(client).catch((err) => ({
+        ok: false,
+        reason: 'SCRIPT_TAG_ERROR',
+        error: err.message,
+      }));
+
       res.json({
         data: {
           ...definitions,
           functionConfig,
           discount,
-          message: discount?.ok
-            ? 'Tienda preparada. Descuento automático B2B activo para carrito/checkout.'
-            : discount?.hint ||
-              'Tienda preparada. Si el carrito sigue con precio de catálogo: despliega la Function (shopify app deploy) y vuelve a pulsar Preparar tienda. Reautoriza scopes write_discounts si hace falta.',
+          themeBoot,
+          scriptTag,
+          embedActivateUrl: embedActivateUrl(req.shop, process.env.SHOPIFY_API_KEY),
+          message: scriptTag?.ok
+            ? 'Tienda preparada. SysPricing carga en todas las páginas (ScriptTag), incluye /cart.'
+            : themeBoot?.ok
+              ? 'Tienda preparada. SysPricing activo vía theme.liquid.'
+              : discount?.ok
+                ? 'Descuento OK. Activa embed B2B o reautoriza write_script_tags.'
+                : discount?.hint ||
+                  'Tienda preparada. Activa App embed SYSPRICING cart B2B o reautoriza write_script_tags.',
         },
       });
     } catch (err) {
